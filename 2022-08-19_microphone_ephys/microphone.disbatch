@@ -1,0 +1,6 @@
+#DISBATCH PREFIX /usr/bin/time -f '%M %E' python check_microphone.py /mnt/home/owinter/ceph/microphone
+/mnt/sdceph/users/ibl/data/mrsicflogellab/Subjects/SWC_NM_004/2021-10-29/001/raw_behavior_data
+/mnt/sdceph/users/ibl/data/churchlandlab/Subjects/CSHL059/2020-03-06/001/raw_behavior_data
+/mnt/sdceph/users/ibl/data/cortexlab/Subjects/KS061/2021-08-02/004/raw_behavior_data
+/mnt/sdceph/users/ibl/data/wittenlab/Subjects/ibl_witten_29/2021-06-16/001/raw_behavior_data
+
