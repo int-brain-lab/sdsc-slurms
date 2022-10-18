@@ -1,0 +1,2 @@
+#DISBATCH PREFIX /usr/bin/time -f '%M %E' python slurm_pykilosort.py --output_dir /mnt/home/owinter/ceph/pykilosort --cbin_file
+/mnt/sdceph/users/ibl/data/churchlandlab_ucla/Subjects/UCLA035/2022-02-24/001/raw_ephys_data/probe01/_spikeglx_ephysData_g0_t0.imec1.ap.f48157b9-fb6d-4178-a674-e1b65173650f.cbin

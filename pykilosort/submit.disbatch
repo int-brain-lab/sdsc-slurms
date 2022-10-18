@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Requirements
+n_tasks=1
+n_cpus=1
+task_file=$HOME/sdsc-slurms/pykilosort/pykilosort.disbatch
+
+# Load FI modules and source virtualenv
+module purge
+module load python/3.8.12
+module load cuda/11.4.4
+module load fftw/3.3.10
+python3 -m venv /mnt/home/owinter/Documents/PYTHON/envs/pykilosort
+source $HOME/Documents/PYTHON/envs/pykilosort/bin/activate
+
+# Submit the slurm job, run ntasks at a time, each with n_pus cores
+sbatch --partition=gpu -n $n_tasks -c $n_cpus disBatch $task_file
