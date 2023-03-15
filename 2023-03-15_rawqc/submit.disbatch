@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Requirements
+n_tasks=1
+n_cpus=4
+mem="8G"
+task_file=$HOME/sdsc-slurms/2023-03-15_rawqc/submit.disbatch
+
+# Load FI modules and source virtualenv
+module purge
+module load disBatch
+module load fftw/3.3.10
+module load python/3.8.12
+source $HOME/Documents/PYTHON/envs/ibllib/bin/activate
+# Submit the slurm job, run ntasks at a time, each with n_pus cores
+sbatch --partition=gen -n $n_tasks -c $n_cpus disBatch $task_file
