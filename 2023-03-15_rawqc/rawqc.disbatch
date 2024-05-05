@@ -1,5 +1,5 @@
-#DISBATCH PREFIX /usr/bin/time -f '%M %E' python rawqc.py
- /mnt/sdceph/users/ibl/data/churchlandlab_ucla/Subjects/UCLA015/2022-03-31/001/raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin
- /mnt/sdceph/users/ibl/data/cortexlab/Subjects/KS086/2022-03-15/001/raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin
- /mnt/sdceph/users/ibl/data/churchlandlab_ucla/Subjects/UCLA036/2022-03-09/001/raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin
- /mnt/sdceph/users/ibl/data/steinmetzlab/Subjects/NR_0020/2022-05-08/001/raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin
+#DISBATCH PREFIX /usr/bin/time -f '%M %E' python rawqc.py 
+/mnt/sdceph/users/ibl/data/churchlandlab_ucla/Subjects/UCLA015/2022-03-31/001/raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin &> UCLA015_2022-03-31_001.log
+/mnt/sdceph/users/ibl/data/cortexlab/Subjects/KS086/2022-03-15/001/raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin &> KS086_2022-03-15_001.log
+/mnt/sdceph/users/ibl/data/churchlandlab_ucla/Subjects/UCLA036/2022-03-09/001/raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin $> UCLA036_2022-03-09_001.log
+# /mnt/sdceph/users/ibl/data/steinmetzlab/Subjects/NR_0020/2022-05-08/001/raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin $> NR_0020_2022-05-08_001.log

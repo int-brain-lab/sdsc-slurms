@@ -2,6 +2,7 @@
 PYTHON_EXEC=/mnt/home/clangfield/Documents/PYTHON/envs/pyks2/bin/python
 LOG_PATH=/mnt/home/clangfield/Documents/spikesorting_reruns_2024/benchmark_integration_tests/logs
 PYTHON_SCRIPT=~/Documents/PYTHON/sdsc-slurms/pykilosort/pykilosort_task.py
+export SDSC_PATCH_PATH=/mnt/sdceph/users/ibl/data/quarantine/tasks_olivier/
 
 #SBATCH -p gpu
 #SBATCH --job-name="${PID}_spikesorting"

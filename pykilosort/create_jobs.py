@@ -8,8 +8,8 @@ slurm_template = sdsc_slurms_repo_path.joinpath("pykilosort", "disbatch_template
 jobs_path = doc_path.joinpath("jobs")
 
 pids = [
-    "gnagna_1a276285-8b0e-4cc9-9f0a-a3a002978724",
-    "gnagna_1e104bf4-7a24-4624-a5b2-c2c8289c0de7",
+"8b735d77-b77b-4243-8821-37802bf402fe",
+"8f2e16c4-893b-4f8f-bfb2-94fa452710ec",
 ]
 
 for pid in pids:
@@ -22,3 +22,4 @@ for pid in pids:
 
     with open(job_fn, "w") as jout:
         jout.write(fdata)
+    print(f"sbatch {job_fn}")
