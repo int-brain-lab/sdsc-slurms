@@ -31,6 +31,12 @@ chmod 775 -fR /mnt/sdceph/users/ibl/data/quarantine/tasks_${USER}/
 ```
 
 ## Step 2: create the disbatch job files
+
+Before doing anything, make sure you reserve your pids in the spreadsheet so that 
+we don't overlap with each other.
+https://docs.google.com/spreadsheets/d/1Cg7snZjPduzm-COgNrExkFoYDvPii5SURv_MwjF9wLA/edit#gid=175449612
+Just put your name next to the pids you want to run
+
 ```
 module load python/3.10.10
 module load cuda/11.8.0
@@ -38,6 +44,27 @@ module load fftw/3.3.10
 source /mnt/home/clangfield/Documents/PYTHON/envs/pyks2/bin/activate
 ```
 
+`sdsc-slurms/pykilosort/create_jobs.py` is a script that will create the job files for the pykilosort task.
+Edit the pids in the scripts to match the pids you want to run.
+
+NB: there is a "copy me" column in the spreadsheet that you can use to copy the pids to the clipboard to paste in a Python dict.
+
+```shell
+
+## Step 3: submit the jobs
+
+```shell
+module load python/3.10.10
+module load cuda/11.8.0
+module load fftw/3.3.10
+source /mnt/home/clangfield/Documents/PYTHON/envs/pyks2/bin/activate
+
+sbatch /mnt/home/clangfield/Documents/spikesorting_reruns_2024/benchmark_integration_tests/jobs/pykilosort_8b735d77-b77b-4243-8821-37802bf402fe.sbatch
+sbath ...
+```
+
+Look at the logs in `/mnt/home/clangfield/Documents/spikesorting_reruns_2024/benchmark_integration_tests/logs`
+and you can monitor the queue with `squeue --me`.
 
 
 
