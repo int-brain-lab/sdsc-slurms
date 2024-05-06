@@ -10,7 +10,7 @@ git clone git@github.com:evarol/dredge.git
 Create the enviornment and activate it
 ```shell
 module load python/3.10.10
-module load cuda/11.4.4
+module load cuda/11.8.0
 module load fftw/3.3.10
 python -m venv ~/Documents/PYTHON/pykilosort/.venv
 source ~/Documents/PYTHON/pykilosort/.venv/bin/activate
@@ -19,7 +19,7 @@ source ~/Documents/PYTHON/pykilosort/.venv/bin/activate
 Install the requirements for each repo
 ```shell
 cd ~/Documents/PYTHON/pykilosort
-pip install -r requirements.txt
+pip install -r pykilosort/requirements.txt
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 cd ../dredge
 pip install -r requirements.txt

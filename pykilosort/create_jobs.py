@@ -7,12 +7,21 @@ doc_path = Path("/mnt/home/clangfield/Documents/spikesorting_reruns_2024/benchma
 slurm_template = sdsc_slurms_repo_path.joinpath("pykilosort", "disbatch_template.sbatch")
 jobs_path = doc_path.joinpath("jobs")
 
+substitutions = {
+    'LOG_PATH': "/mnt/home/clangfield/Documents/spikesorting_reruns_2024/benchmark_integration_tests/logs",
+    'TIME': "16:00:00",
+    'PID': None,
+
+}
 pids = [
 "8b735d77-b77b-4243-8821-37802bf402fe",
 "8f2e16c4-893b-4f8f-bfb2-94fa452710ec",
 ]
 
+
+
 for pid in pids:
+    substitutions['PID'] = pid
     with open(slurm_template, "r") as template:
         fdata = template.read()
     fdata = fdata.replace("${PID}", pid)
