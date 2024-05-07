@@ -54,13 +54,8 @@ NB: there is a "copy me" column in the spreadsheet that you can use to copy the 
 ## Step 3: submit the jobs
 
 ```shell
-module load python/3.10.10
-module load cuda/11.8.0
-module load fftw/3.3.10
-source /mnt/home/clangfield/Documents/PYTHON/envs/pyks2/bin/activate
-
 sbatch /mnt/home/clangfield/Documents/spikesorting_reruns_2024/benchmark_integration_tests/jobs/pykilosort_8b735d77-b77b-4243-8821-37802bf402fe.sbatch
-sbath ...
+sbatch ...
 ```
 
 Look at the logs in `/mnt/home/clangfield/Documents/spikesorting_reruns_2024/benchmark_integration_tests/logs`
