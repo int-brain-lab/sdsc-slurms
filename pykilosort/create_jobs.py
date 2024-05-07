@@ -8,7 +8,7 @@ slurm_template = sdsc_slurms_repo_path.joinpath("pykilosort", "disbatch_template
 jobs_path = doc_path.joinpath("jobs")
 
 substitutions = {
-    'LOG_PATH': "/mnt/home/clangfield/Documents/spikesorting_reruns_2024/benchmark_integration_tests/logs",
+    'LOG_PATH': doc_path.joinpath("logs"),
     'TIME': "16:00:00",
     'PID': None,
 
