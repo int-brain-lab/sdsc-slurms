@@ -8,7 +8,7 @@ slurm_template = sdsc_slurms_repo_path.joinpath("pykilosort", "disbatch_template
 jobs_path = doc_path.joinpath("jobs")
 
 substitutions = {
-    'LOG_PATH': doc_path.joinpath("logs"),
+    'LOG_PATH': str(doc_path.joinpath("logs")),
     'TIME': "16:00:00",
     'PID': None,
     'MAIL_USER': 'cal2254@columbia.edu'
