@@ -11,8 +11,9 @@ substitutions = {
     'LOG_PATH': doc_path.joinpath("logs"),
     'TIME': "16:00:00",
     'PID': None,
-
+    'MAIL_USER': 'cal2254@columbia.edu'
 }
+
 pids = [
     'bf827e50-eed3-4984-908e-c48ffbeae7b5',
     'c07d13ed-e387-4457-8e33-1d16aed3fd92',
@@ -22,8 +23,6 @@ pids = [
     'c5b9e063-f640-4936-b851-f7602cb6659b',
     'c6ba6f8e-c13e-410f-b7df-e193ba0d239d',
 ]
-
-
 
 for pid in pids:
     substitutions['PID'] = pid

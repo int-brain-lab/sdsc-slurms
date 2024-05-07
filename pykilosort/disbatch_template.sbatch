@@ -8,7 +8,7 @@
 #SBATCH --time=${TIME}
 #SBATCH -o ${LOG_PATH}/${PID}_spikesorting.log
 #SBATCH --mail-type=FAIL
-#SBATCH --mail-user=cal2254@columbia.edu
+#SBATCH --mail-user=${MAIL_USER}
 
 PYTHON_EXEC=/mnt/home/clangfield/Documents/PYTHON/envs/pyks2/bin/python
 PYTHON_SCRIPT=~/Documents/PYTHON/sdsc-slurms/pykilosort/pykilosort_task.py
