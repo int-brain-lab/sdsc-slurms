@@ -39,3 +39,20 @@ def check_pids(pids, one=None, user="clangfield"):
         
     df = pd.DataFrame({"path":path, "status":status, "duration_hours":time},index=pids)
     return df
+
+def check_pids_registered(pids, one=None):
+    if not one:
+        one = ONE()
+    status = []
+    
+    for pid in pids:
+        eid, probe = one.pid2eid(pid)
+        if f'alf/{probe}/pykilosort/#2024-05-06#/spikes.samples.npy' in one.list_datasets(eid):
+            status.append("Yes")
+        else:
+            status.append("No")
+            
+    df = pd.DataFrame({"registered":status}, index=pids)
+    
+    return df
+    
