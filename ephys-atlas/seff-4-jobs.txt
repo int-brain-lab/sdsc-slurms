@@ -1,0 +1,11 @@
+Job ID: 2021510
+Cluster: popeye
+User/Group: owinter/owinter
+State: COMPLETED (exit code 0)
+Nodes: 1
+Cores per node: 4
+CPU Utilized: 01:18:10
+CPU Efficiency: 97.30% of 01:20:20 core-walltime
+Job Wall-clock time: 00:20:05
+Memory Utilized: 18.81 GB
+Memory Efficiency: 29.38% of 64.00 GB
