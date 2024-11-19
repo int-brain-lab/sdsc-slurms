@@ -11,15 +11,15 @@ from deploy.iblsdsc import OneSdsc as ONE
 from brainbox.io.one import SpikeSortingLoader
 import ibldsp.voltage
 
-root_path = Path('/mnt/home/owinter/ceph/EA')  # fixme: replace with real path
-# df_snippets = pd.read_parquet(root_path.joinpath('snippets.pqt'))
-# % Loads and optionally displays the data
+root_path = Path('/mnt/home/owinter/ceph/EA')
+n_jobs = 48
+df_snippets = pd.read_csv(root_path.joinpath('/mnt/home/owinter/Documents/sdsc-slurms/ephys-atlas/snippets_benchmark.csv'))
 
-ns_ap = 2 ** 18
+ns_ap = 2 ** 18  # around 8 seconds of data
 lf_offset = 3  # in samples, the shift to apply to LF to align with AP
 
 
-def compute_snippet_features(subject=None, pid=None, eid=None, pname=None, t0=None):
+def compute_snippet_features(subject=None, pid=None, eid=None, pname=None, t0=None, **kwargs):
     one = ONE(mode='local')  # nb: this can't be instantiated in any other mode
     path_snippet = root_path.joinpath(subject, pid, f'T{t0 * 1e3 :010.0f}')
     path_waveforms = path_snippet.joinpath('waveforms')
@@ -79,24 +79,6 @@ def compute_snippet_features(subject=None, pid=None, eid=None, pname=None, t0=No
         #     'channel_index': np.load(path_waveforms.joinpath('waveform_channels.npy')),
         #     'df_spikes': pd.read_parquet(path_waveforms.joinpath('spikes.pqt')),
         # }
-
-
-# compute_snippet_features(
-#     pid = 'dab512bd-a02d-4c1f-8dbc-9155a163efc0',
-#     eid = 'd23a44ef-1402-4ed7-97f5-47e9a7a504d9',
-#     pname = 'probe00',
-#     subject = 'algernon',
-#     t0 = 200
-# )
-
-n_jobs = 8
-df_snippets = pd.DataFrame({
-    'pid': ["dab512bd-a02d-4c1f-8dbc-9155a163efc0"] * n_jobs,
-    'eid': ['d23a44ef-1402-4ed7-97f5-47e9a7a504d9'] * n_jobs,
-    'pname': ['probe00'] * n_jobs,
-    'subject': ['algernon'] * n_jobs,
-    't0': np.linspace(200, 1600, n_jobs)
-})
 
 jobs = [joblib.delayed(compute_snippet_features)(**dict(args)) for _, args in df_snippets.iterrows()]
 joblib.Parallel(n_jobs=n_jobs)(jobs)
