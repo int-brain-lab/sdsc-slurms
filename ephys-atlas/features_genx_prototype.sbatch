@@ -1,10 +1,10 @@
 #!/usr/bin/bash
-#SBATCH -p gen
+#SBATCH -p genx
 #SBATCH --job-name="features"
-#SBATCH --cpus-per-task=48
+#SBATCH --cpus-per-task=4
 #SBATCH --ntasks=1
-#SBATCH --mem=500G
-#SBATCH --time=3:00:00
+#SBATCH --mem=32G
+#SBATCH --time=2:00:00
 #SBATCH -o /mnt/home/owinter/Documents/sdsc-slurms/ephys-atlas/_log_.%x_%j.out
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=olivier.winter@internationalbrainlab.org
