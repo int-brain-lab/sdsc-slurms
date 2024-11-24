@@ -13,7 +13,10 @@ import ibldsp.voltage
 
 root_path = Path('/mnt/home/owinter/ceph/EA')
 n_jobs = 48
-df_snippets = pd.read_csv(root_path.joinpath('/mnt/home/owinter/Documents/sdsc-slurms/ephys-atlas/snippets_benchmark.csv'))
+
+df_snippets = pd.read_csv(root_path.joinpath('/mnt/home/owinter/Documents/sdsc-slurms/ephys-atlas/snippets_others.csv'))
+df_snippets = df_snippets[df_snippets['neuropixel'] != 'NP2.4'].copy()
+#df_snippets = df_snippets[np.mod(df_snippets['i_snippet'], 2) == 0].copy()
 
 ns_ap = 2 ** 18  # around 8 seconds of data
 lf_offset = 3  # in samples, the shift to apply to LF to align with AP
@@ -28,6 +31,7 @@ def compute_snippet_features(subject=None, pid=None, eid=None, pname=None, t0=No
     file_lf = path_snippet.joinpath('lf.pqt')
     file_ap = path_snippet.joinpath('ap.pqt')
     file_wav = path_snippet.joinpath('wav.pqt')
+    file_channels = path_snippet.joinpath('channels.pqt')
 
     ssl = SpikeSortingLoader(eid=eid, pname=pname, one=one)
     channels = ssl.load_channels()
@@ -49,6 +53,10 @@ def compute_snippet_features(subject=None, pid=None, eid=None, pname=None, t0=No
         return ibldsp.voltage.destripe_lfp(
             raw_lf, fs=sr_lf.fs, channel_labels=channels['labels'],
         )
+
+    if not file_channels.exists():
+        df_channels = pd.DataFrame(channels).rename(columns={'rawInd': 'channel'})
+        df_channels.to_parquet(file_channels)
 
     if not file_lf.exists():
         des_lf = destripe_lf(t0)
