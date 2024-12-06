@@ -34,10 +34,16 @@ def compute_snippet_features(subject=None, pid=None, eid=None, pname=None, t0=No
     file_channels = path_snippet.joinpath('channels.pqt')
 
     ssl = SpikeSortingLoader(eid=eid, pname=pname, one=one)
-    channels = ssl.load_channels()
-    sr_ap = ssl.raw_electrophysiology(band='ap', stream=False)  # TODO stream false
+    try:
+        channels = ssl.load_channels()
+    except Exception:
+        return
+    sr_ap = ssl.raw_electrophysiology(band='ap', stream=False)
     sr_lf = ssl.raw_electrophysiology(band='lf', stream=False)
     ns_lf = int(ns_ap * sr_lf.fs / sr_ap.fs)
+    if 'labels' not in channels:
+        channels['labels'] = ibldsp.voltage.detect_bad_channels_cbin(sr_ap.file_bin)
+
 
     @functools.lru_cache(maxsize=1)
     def destripe_ap(t0):
@@ -55,7 +61,10 @@ def compute_snippet_features(subject=None, pid=None, eid=None, pname=None, t0=No
         )
 
     if not file_channels.exists():
-        df_channels = pd.DataFrame(channels).rename(columns={'rawInd': 'channel'})
+        try:
+            df_channels = pd.DataFrame(channels).rename(columns={'rawInd': 'channel'})
+        except Exception:
+            return
         df_channels.to_parquet(file_channels)
 
     if not file_lf.exists():

@@ -14,5 +14,5 @@ PYTHON_SCRIPT=~/Documents/sdsc-slurms/ephys-atlas/features.py
 
 module load python/3.11
 
-$PYTHON_EXEC $PYTHON_SCRIPT
+$PYTHON_EXEC -u $PYTHON_SCRIPT
 
