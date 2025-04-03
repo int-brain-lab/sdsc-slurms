@@ -61,50 +61,57 @@ def run_single_job(job_idx):
     if TARGET == 'stimside':
         align_event = 'stimOn_times'
         time_window = (0.0, 0.1)
+        saturation_intervals = 'saturation_stim_plus01'
         model = 'oracle'
         estimator = 'LogisticRegression'
 
     elif TARGET == 'signcont':
         align_event = 'stimOn_times'
         time_window = (0.0, 0.1)
+        saturation_intervals = 'saturation_stim_plus01'
         model = 'oracle'
         estimator = 'Lasso'
 
     elif TARGET == 'choice':
         align_event = 'firstMovement_times'
         time_window = (-0.1, 0.0)
+        saturation_intervals = 'saturation_move_minus02'
         model = 'actKernel'
         estimator = 'LogisticRegression'
 
     elif TARGET == 'feedback':
         align_event = 'feedback_times'
         time_window = (0.0, 0.2)
+        saturation_intervals = 'saturation_feedback_plus04'
         model = 'actKernel'
         estimator = 'LogisticRegression'
 
     elif TARGET == 'pLeft':
         align_event = 'stimOn_times'
         time_window = (-0.6, -0.1)
+        saturation_intervals = 'saturation_stim_minus06_plus06'
         model = 'optBay'
         estimator = 'LogisticRegression'
 
     elif TARGET in ['wheel-speed', 'wheel-velocity']:
         align_event = 'firstMovement_times'
         time_window = (-0.2, 1.0)
+        saturation_intervals = 'saturation_move_minus02'
         model = 'oracle'
         estimator = 'Lasso'
         binsize = 0.02
         n_bins_lag = 10
         n_bins = 60
         n_runs = 2
-
     else:
         raise ValueError(f'{TARGET} is an invalid target value')
 
     # Run the decoding for the current set of pseudo ids.
     results = fit_session_ephys(
         one, session_id, subject, probe_name, output_dir=output_dir, pseudo_ids=pseudo_ids, target=TARGET,
-        align_event=align_event, time_window=time_window, model=model, n_runs=n_runs,
+        align_event=align_event, time_window=time_window,
+        saturation_intervals=saturation_intervals,
+        model=model, n_runs=n_runs,
         binsize=binsize, n_bins_lag=n_bins_lag, n_bins=n_bins,
         compute_neurometrics=False, motor_residuals=False,
     )
