@@ -1,4 +1,5 @@
 # specific slurm excludes
+*.dud
 *.log
 *.out
 *.err

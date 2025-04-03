@@ -11,7 +11,6 @@ from one.api import ONE
 from iblutil.numerical import hash_uuids
 from iblutil.io import hashfile
 
-# rsync -av popeye:/mnt/home/owinter/ceph/EA/ /home/olivier/Documents/2024/EA_recuced --exclude '*.npy*'
 feature_names = ['ap', 'lf', 'csd', 'wav']
 root_path = Path('/mnt/home/owinter/ceph/EA')
 out_path = Path('/mnt/home/owinter/ceph/EA_reduced')
@@ -25,7 +24,7 @@ def has_snippet_changed(snippet_path):
     file_hash = next(snippet_path.glob("*.md5"), None)
     if file_hash is None:
         return True
-    if file_hash.name == _compute_hash(snippet_path):
+    if file_hash.stem == _compute_hash(snippet_path):
         return False
     return True
     
@@ -35,8 +34,10 @@ def save_hash(snippet_path):
         hash_file.unlink()
     snippet_path.joinpath(f"{hash}.md5").touch()
 
-
+IMIN = 67
 for i, subject in enumerate(subjects):
+    if i < IMIN:
+        continue
     output_file = out_path.joinpath(f'{subject}.pqt')
     if output_file.exists() and not OVERWRITE:
         continue
@@ -47,8 +48,7 @@ for i, subject in enumerate(subjects):
         continue
     df_voltage, df_channels = ([], [])
     for snippet_path in snippet_paths:
-        if not has_snippet_changed(snippet_path):
-            continue
+        print(f'compute {snippet_path}')
         t0, pid = (float(snippet_path.parts[-1][1:]) / 1e3 , snippet_path.parts[-2])
         df_snippet = {fn: None for fn in feature_names}
         for fn in feature_names:

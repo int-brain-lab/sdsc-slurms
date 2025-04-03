@@ -9,11 +9,17 @@ from brainwidemap.bwm_loading import bwm_query
 from prior_localization.fit_data import fit_session_ephys
 
 n_jobs = 48
-N_PSEUDO = 200
-N_PER_JOB = 10
+
+N_PSEUDO = 100
+N_PER_JOB = 4
 OUTPUT_DIR = '/mnt/home/owinter/ceph/bwm/wheel_rerun'
 TARGET = 'wheel-velocity'
-job_list = np.arange(26, 50 + 1)
+
+WORKER_ID, N_WORKERS = (2, 3)  # 0-based worker id
+job_list = np.arange(1, 3000 + 1)[WORKER_ID::N_WORKERS]
+
+
+# job_list = np.load('/mnt/home/owinter/Documents/sdsc-slurms/bwm/jobs_remaining.npy')
 
 
 def run_single_job(job_idx):
