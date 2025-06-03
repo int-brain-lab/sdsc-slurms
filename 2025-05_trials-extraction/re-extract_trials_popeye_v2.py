@@ -30,6 +30,7 @@ def process_one_session(tup, processed=None, processed_paths=None):
     eid, session_path = tup
     # Add key to dict in case function doesn't return
     processed[eid] = (Exception('Not processed'),)
+    processed_paths[eid] = []
     logger.info('===== eID %s; %s =====', str(eid), session_path.relative_to(ROOT))
     print(tup)
 
