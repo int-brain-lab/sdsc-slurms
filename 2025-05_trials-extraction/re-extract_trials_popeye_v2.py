@@ -8,7 +8,7 @@ import ibllib.pipes.dynamic_pipeline as dyn
 from deploy.iblsdsc import OneSdsc, CACHE_DIR, CACHE_DIR_FI
 from ibllib import __version__
 from iblutil.io.params import FileLock
-from .constants import REVISION_FPGA, ROOT, DATASETS, correct_version, PROCESSED, PROCESSED_PATHS, TASKS_DIR
+from trials_extraction.constants import REVISION_FPGA, ROOT, DATASETS, correct_version, PROCESSED, PROCESSED_PATHS, TASKS_DIR
 
 from multiprocessing import Pool, Manager
 
