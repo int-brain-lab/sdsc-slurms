@@ -8,15 +8,17 @@ import ibllib.pipes.dynamic_pipeline as dyn
 from deploy.iblsdsc import OneSdsc, CACHE_DIR, CACHE_DIR_FI
 from ibllib import __version__
 from iblutil.io.params import FileLock
-from trials_extraction.constants import REVISION_FPGA, ROOT, DATASETS, correct_version, PROCESSED, PROCESSED_PATHS, TASKS_DIR
+from trials_extraction.constants import REVISION_FPGA, ROOT, DATASETS, correct_version, PROCESSED, PROCESSED_PATHS, TASKS_DIR, setenv
 
 from multiprocessing import Pool, Manager
 
 logger = logging.getLogger('ibllib')
 
 assert correct_version(__version__)
+setenv()
 
-RUN_LIST = PROCESSED.with_stem(f'{REVISION_FPGA}_run_list.pkl')
+RUN_LIST = PROCESSED.with_stem(f'{REVISION_FPGA}_run_list')
+assert RUN_LIST.exists(), f'Run list file {RUN_LIST} does not exist. Please run 02_get-trials-run-list.py first.'
 
 def popeye_to_sdsc(path):
     return CACHE_DIR_FI.joinpath(path.relative_to(CACHE_DIR))
