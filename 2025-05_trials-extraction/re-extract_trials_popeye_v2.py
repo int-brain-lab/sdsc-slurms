@@ -26,14 +26,15 @@ def popeye_to_sdsc(path):
 # eids = to_process[:, 0]
 # dsets = one.alyx.rest('datasets', 'list', django=f'name__startswith,_ibl_trials,session__in,{eids}')
 # [{'session': url[-33:]}]
-def process_one_session(tup, one=None, processed=None, processed_paths=None):
+def process_one_session(tup, processed=None, processed_paths=None):
     eid, session_path = tup
     # Add key to dict in case function doesn't return
     processed[eid] = (Exception('Not processed'),)
     logger.info('===== eID %s; %s =====', str(eid), session_path.relative_to(ROOT))
     print(tup)
 
-    # one = ONE()
+    one = OneSdsc(
+        base_url='https://alyx.internationalbrainlab.org', cache_rest=None, mode='remote', cache_dir=CACHE_DIR_FI)
 
     # logic for if the dataset already exists
     # dsets = one.alyx.rest('datasets', 'list', session=eid, django='name__startswith,_ibl_trials')
@@ -137,10 +138,8 @@ def main():
         # Initialize shared dictionaries for processed results and paths
         processed = manager.dict()  # Store processed results
         processed_paths = manager.dict()  # Store processed paths
-        one = OneSdsc(
-            base_url='https://alyx.internationalbrainlab.org', cache_rest=None, mode='remote', cache_dir=CACHE_DIR_FI)
 
-        f = partial(process_one_session, one=one, processed=processed, processed_paths=processed_paths)
+        f = partial(process_one_session, processed=processed, processed_paths=processed_paths)
         with Pool(processes=2) as pool:
             results = pool.map(f, run_list[:2])
     assert len(processed) == 2
