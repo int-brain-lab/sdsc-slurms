@@ -135,18 +135,18 @@ def main():
         with open(RUN_LIST, 'rb') as fp:
             run_list = pickle.load(fp)
 
-    with Manager() as manager:
-        # Initialize shared dictionaries for processed results and paths
-        processed = manager.dict()  # Store processed results
-        processed_paths = manager.dict()  # Store processed paths
+    manager = Manager()
+    # Initialize shared dictionaries for processed results and paths
+    processed = manager.dict()  # Store processed results
+    processed_paths = manager.dict()  # Store processed paths
 
-        f = partial(process_one_session, processed=processed, processed_paths=processed_paths)
-        with Pool(processes=2) as pool:
-            results = pool.map(f, run_list[:2])
+    f = partial(process_one_session, processed=processed, processed_paths=processed_paths)
+    with Pool(processes=2) as pool:
+        results = pool.map(f, run_list[:2])
     assert len(processed) == 2
     assert len(processed_paths) == 2
     # Save processed paths
-    save_processed(processed, processed_paths)
+    save_processed(dict(processed), dict(processed_paths))
     cmd = f'chmod -R 777 {str(TASKS_DIR)}/Trials*'
     os.system(cmd)
 
