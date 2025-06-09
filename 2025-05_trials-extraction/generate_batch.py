@@ -31,11 +31,12 @@ if __name__ == '__main__':
         run_list = groupby(run_list, key=lambda x: x[1].session_parts[1])
         for i, (_, run_list_) in enumerate(run_list):
             if i < n:
-                n_sessions += len(run_list_)
+                n_sessions += len(list(run_list_))
             else:
                 break
     else:
         n_sessions = min(parsed.n_sessions, len(run_list))
+        n = len(set(ALFPath(session_path).session_parts[1] for _, session_path in run_list[:n_sessions]))
 
     estimate = timedelta(seconds=n_sessions * AVG_LEN)
     # Format the estimate as a string with format 'HH:MM:SS'
