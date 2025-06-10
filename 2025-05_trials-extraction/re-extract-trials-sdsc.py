@@ -24,7 +24,7 @@ _logger = logging.getLogger('ibllib')
 assert correct_version(__version__)
 # setenv()
 
-N_JOBS = 4  # Number of processes to use for multiprocessing
+N_JOBS = 8  # Number of processes to use for multiprocessing
 ROOT = Path('/mnt/ibl')
 PROCESSED = ROOT / PROCESSED.relative_to(POPEYE_ROOT)
 TASKS_DIR = PROCESSED.with_name(TASKS_DIR.name) 
@@ -257,6 +257,7 @@ def main():
     with Pool(processes=N_JOBS) as pool:
         results = pool.map(f, to_run)
     # Save processed paths
+    _logger.info('Saving processed results and paths...')
     save_processed(dict(processed), dict(processed_paths))
     # cmd = f'chmod -R 777 {str(TASKS_DIR)}/Trials*'
     # os.system(cmd)
