@@ -1,5 +1,4 @@
 import argparse
-import os
 import pickle
 import logging
 import shutil
@@ -11,6 +10,7 @@ from ibllib.oneibl.patcher import SDSCPatcher
 import ibllib.pipes.dynamic_pipeline as dyn
 from deploy.iblsdsc import OneSdsc, CACHE_DIR, CACHE_DIR_FI
 from ibllib import __version__
+from ibllib.qc.task_metrics import update_dataset_qc, TaskQC
 from iblutil.io.params import FileLock
 from trials_extraction.constants import (
     REVISION_FPGA, REVISION_BPOD, ROOT as POPEYE_ROOT, DATASETS, correct_version,
@@ -108,8 +108,7 @@ def process_one_session(tup, processed=None, processed_paths=None):
             status = task.run()
             assert status == 0, 'extraction failure'
             task.outputs = [f for f in task.outputs if f.name in DATASETS]
-            processed_paths[eid] += task.outputs
-
+            new_paths = task.outputs
             try:
                 responses = task.register_datasets(default=True, force=False)
             except FileExistsError as e:
@@ -124,6 +123,37 @@ def process_one_session(tup, processed=None, processed_paths=None):
                     _logger.error(e)
                     continue
 
+            processed_paths[eid] += new_paths
+            _logger.info(f'Updating dataset QC for {eid}')
+            extended_qc = one.get_details(eid, True)['extended_qc']
+            task_name = session_path.parts[-6]
+            # if re.match(r'^Trials_\w+_\d{2}', task_name):
+            #     protocol_number = int(task_name.split('_')[-1])
+            # else:
+            #     protocol_number = 0
+            # namespace = f'task_{protocol_number:02d}'
+            if new_paths[0].parent.name == 'alf':
+                namespace = 'task'
+            elif new_paths[0].parent.name.startswith('task_'):
+                namespace = new_paths[0].parent.name
+                if not any(k.startswith(f'_{namespace}_') for k in extended_qc):
+                    # If the namespace is not present, try the default
+                    namespace = 'task'
+            else:
+                _logger.error(f'Unexpected parent name {new_paths[0].parent.name} for {eid}')
+                continue
+            
+            results = {k: v for k, v in extended_qc.items() if k.startswith(f'_{namespace}_')}
+            if not results:
+                _logger.warning(f'No QC found for {task_name} in {eid}')
+                continue
+            try:
+                qc = TaskQC(session_path, namespace=namespace, one=one)
+                qc.passed = results
+                responses = update_dataset_qc(qc, responses, one)
+            except Exception as e:
+                _logger.error(f'Error updating dataset QC for {eid}: {e}')
+                continue
 
             err.append(None)
         except Exception as ex:
