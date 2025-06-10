@@ -13,15 +13,17 @@ from iblutil.util import rrmdir
 from iblutil.io.params import FileLock
 
 from one.alf.path import get_session_path
+from one.alf.io import iter_sessions
 
 from deploy.iblsdsc import OneSdsc, CACHE_DIR_FI
 
-from trials_extraction.constants import DATASETS, correct_version, ROOT as POPEYE_ROOT, PROCESSED, PROCESSED_PATHS, REVISION_FPGA, REVISION_BPOD
+from trials_extraction.constants import DATASETS, correct_version, ROOT as POPEYE_ROOT, PROCESSED, PROCESSED_PATHS, REVISION_FPGA, REVISION_BPOD, TASKS_DIR
 
 assert correct_version(__version__)
 _logger = logging.getLogger('ibllib')
 ROOT = Path('/mnt/ibl')
 PROCESSED = ROOT / PROCESSED.relative_to(POPEYE_ROOT)
+TASKS_DIR = PROCESSED.with_name(TASKS_DIR.name) 
 PROCESSED_PATHS = PROCESSED.with_name(PROCESSED_PATHS.name)
 
 assert PROCESSED.exists(), f'Processed file {PROCESSED} does not exist'
@@ -61,7 +63,7 @@ def determine_revision(session_path):
     return REVISION_FPGA if any(daq_dirs) else REVISION_BPOD
 
 
-def main():
+def main(glob=False):
     # Load the processed paths
     with FileLock(PROCESSED_PATHS, timeout_action='raise'):
         with open(PROCESSED_PATHS, 'rb') as fp:
@@ -76,6 +78,10 @@ def main():
 
     to_remove_processed = []
     to_remove_paths = {}
+    if glob:
+        sessions = iter_sessions(TASKS_DIR, pattern='Trials_*_??/*/Subjects/*/????-??-??/*')
+        sessions = ((one.path2eid(s), list(filter(lambda x: x.name in DATASETS, s.iter_datasets()))) for s in sessions)
+        processed_paths = filter(lambda x: x[1], sessions)
     # Begin registration
     for eid, paths in processed_paths.items():
         if not (all(map(Path.exists, paths)) and set(p.name for p in paths) >= set(DATASETS)):

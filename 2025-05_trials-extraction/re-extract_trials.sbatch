@@ -4,6 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --time=00:14:00
 #SBATCH -o '/mnt/home/mwells/Documents/PYTHON/trials-extraction/popeye_re_extract.out'
+#SBATCH -p gen
 #SBATCH --open-mode=append
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=miles.wells@internationalbrainlab.org
