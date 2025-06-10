@@ -132,15 +132,16 @@ def process_one_session(tup, processed=None, processed_paths=None):
             # else:
             #     protocol_number = 0
             # namespace = f'task_{protocol_number:02d}'
-            if new_paths[0].parent.name == 'alf':
+            collection = ALFPath(new_paths[0]).collection
+            if collection == 'alf':
                 namespace = 'task'
-            elif new_paths[0].parent.name.startswith('task_'):
+            elif collection.startswith('alf/task_'):
                 namespace = new_paths[0].parent.name
                 if not any(k.startswith(f'_{namespace}_') for k in extended_qc):
                     # If the namespace is not present, try the default
                     namespace = 'task'
             else:
-                _logger.error(f'Unexpected parent name {new_paths[0].parent.name} for {eid}')
+                _logger.error(f'Unexpected collection {collection} for {eid}')
                 continue
             
             results = {k: v for k, v in extended_qc.items() if k.startswith(f'_{namespace}_')}
