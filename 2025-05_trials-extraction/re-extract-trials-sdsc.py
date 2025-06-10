@@ -69,6 +69,7 @@ def determine_revision(session_path):
 # [{'session': url[-33:]}]
 def process_one_session(tup, processed=None, processed_paths=None):
     eid, session_path = tup
+    session_path = ROOT.joinpath(session_path.relative_to(POPEYE_ROOT))
     # Add key to dict in case function doesn't return
     processed[eid] = (Exception('Not processed'),)
     processed_paths[eid] = []
@@ -226,11 +227,11 @@ def main():
         results = pool.map(f, to_run)
     # Save processed paths
     save_processed(dict(processed), dict(processed_paths))
-    cmd = f'chmod -R 777 {str(TASKS_DIR)}/Trials*'
-    os.system(cmd)
-    for p in (PROCESSED_PATHS, PROCESSED):
-        cmd = f'chmod -R 777 {str(p)}'
-        os.system(cmd)
+    # cmd = f'chmod -R 777 {str(TASKS_DIR)}/Trials*'
+    # os.system(cmd)
+    # for p in (PROCESSED_PATHS, PROCESSED):
+    #     cmd = f'chmod -R 777 {str(p)}'
+    #     os.system(cmd)
 
 
 if __name__ == '__main__':
