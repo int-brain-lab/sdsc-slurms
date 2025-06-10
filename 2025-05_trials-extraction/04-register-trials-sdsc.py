@@ -183,3 +183,9 @@ def main():
         run_list = [tup for tup in run_list if tup[0] not in to_remove_processed]
         with open(RUN_LIST, 'wb') as fp:
             pickle.dump(run_list, fp)
+
+
+if __name__ == '__main__':
+    _logger.info('Starting registration of trials extraction')
+    main()
+    _logger.info('Registration complete.')

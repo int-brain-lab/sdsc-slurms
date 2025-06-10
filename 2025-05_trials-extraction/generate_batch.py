@@ -38,7 +38,7 @@ if __name__ == '__main__':
         n_sessions = min(parsed.n_sessions, len(run_list))
         n = len(set(ALFPath(session_path).session_parts[1] for _, session_path in run_list[:n_sessions]))
 
-    estimate = timedelta(seconds=n_sessions * AVG_LEN)
+    estimate = timedelta(seconds=(n_sessions * AVG_LEN) / N_JOBS)
     # Format the estimate as a string with format 'HH:MM:SS'
     estimate_str = str(estimate).split('.')[0]  # Remove microseconds
     print(f'Processing {n_sessions} sessions for {n} subjects (should take about {estimate_str})')
