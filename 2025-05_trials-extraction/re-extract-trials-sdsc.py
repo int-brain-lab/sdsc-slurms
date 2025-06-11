@@ -96,13 +96,13 @@ def process_one_session(tup, processed=None, processed_paths=None):
     #     return err
 
     try:
-        tasks = dyn.get_trials_tasks(session_path, one=one)
+        tasks = filter(dyn.is_active_trials_task, dyn.get_trials_tasks(session_path, one=one))
     except Exception as ex:
         processed[eid] = (ex,)
         return
 
     err = []
-    for task in filter(dyn.is_active_trials_task, tasks):
+    for task in tasks:
         task.location = task.machine = 'sdsc'
         try:
             status = task.run()
@@ -180,7 +180,7 @@ def group_by_subject(run_list):
     """
     # Ensure ALFPath
     run_list = [(eid, ALFPath(session_path)) for eid, session_path in run_list]
-    return groupby(run_list, key=lambda x: x[1].session_parts[1])
+    return groupby(run_list, key=lambda x: x[1].subject)
 
 
 def process_one_subject(subject, run_list, **kwargs):
