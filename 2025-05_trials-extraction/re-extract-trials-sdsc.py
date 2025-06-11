@@ -2,6 +2,7 @@ import argparse
 import pickle
 import logging
 import shutil
+import time
 from pathlib import Path
 from itertools import groupby
 from functools import partial
@@ -253,9 +254,12 @@ def main():
         n = parsed.n_sessions
         to_run = run_list[:n]
         f = partial(process_one_session, processed=processed, processed_paths=processed_paths)
-        
+
+    t0 = time.time()
+    _logger.info('Starting processing of %i sessions with %i jobs...', len(to_run), N_JOBS)
     with Pool(processes=N_JOBS) as pool:
         results = pool.map(f, to_run)
+    _logger.info(f'Processing %i sessions with %i jobs took %.2g minutes', len(to_run), N_JOBS, (time.time() - t0) / 60)
     # Save processed paths
     _logger.info('Saving processed results and paths...')
     save_processed(dict(processed), dict(processed_paths))

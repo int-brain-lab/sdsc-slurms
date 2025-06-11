@@ -24,7 +24,9 @@ from ibllib import __version__
 import pandas as pd
 from datetime import datetime, date
 from data.models import Dataset
-from .constants import REVISION_BPOD, REVISION_FPGA, VERSION_BPOD, VERSION_FPGA, ROOT, DATASETS, correct_version
+from trials_extraction.constants import (
+    REVISION_BPOD, REVISION_FPGA, VERSION_BPOD, VERSION_FPGA, ROOT, DATASETS, correct_version
+)
 
 assert correct_version(__version__, VERSION_FPGA), 'ibllib version is too old, please update'
 assert version.parse(ONE.version) >= version.Version('3.1.1'), 'ONE version is too old, please update'
