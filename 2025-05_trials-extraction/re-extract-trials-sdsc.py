@@ -97,7 +97,7 @@ def process_one_session(tup, processed=None, processed_paths=None):
     #     return err
 
     try:
-        tasks = filter(dyn.is_active_trials_task, dyn.get_trials_tasks(session_path, one=one))
+        tasks = list(filter(dyn.is_active_trials_task, dyn.get_trials_tasks(session_path, one=one)))
     except Exception as ex:
         processed[eid] = (ex,)
         return
