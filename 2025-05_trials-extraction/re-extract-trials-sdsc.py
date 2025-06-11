@@ -164,8 +164,8 @@ def process_one_session(tup, processed=None, processed_paths=None):
         finally:
             try:
                 task.cleanUp()  # the popeye handler does nothing here
-            except AssertionError:
-                pass
+            except Exception as e:
+                _logger.error(f'Error cleaning up task {task.name} for {eid}: {e}')
     processed[eid] = err
 
 
