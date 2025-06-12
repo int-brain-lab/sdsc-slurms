@@ -15,7 +15,7 @@ from ibllib.qc.task_metrics import update_dataset_qc, TaskQC
 from iblutil.io.params import FileLock
 from trials_extraction.constants import (
     REVISION_FPGA, REVISION_BPOD, ROOT as POPEYE_ROOT, DATASETS, correct_version,
-    PROCESSED, PROCESSED_PATHS, TASKS_DIR, setenv
+    PROCESSED, PROCESSED_PATHS, TASKS_DIR
 )
 
 from multiprocessing import Pool, Manager
@@ -23,7 +23,6 @@ from multiprocessing import Pool, Manager
 _logger = logging.getLogger('ibllib')
 
 assert correct_version(__version__)
-# setenv()
 
 N_JOBS = 8  # Number of processes to use for multiprocessing
 ROOT = Path('/mnt/ibl')
@@ -68,13 +67,19 @@ def determine_revision(session_path):
 # eids = to_process[:, 0]
 # dsets = one.alyx.rest('datasets', 'list', django=f'name__startswith,_ibl_trials,session__in,{eids}')
 # [{'session': url[-33:]}]
-def process_one_session(tup, processed=None, processed_paths=None):
+def process_one_session(tup, processed=None, processed_paths=None, flag_path=None):
     eid, session_path = tup
     session_path = ROOT.joinpath(session_path.relative_to(POPEYE_ROOT))
     # Add key to dict in case function doesn't return
     processed[eid] = (Exception('Not processed'),)
     processed_paths[eid] = []
     _logger.info('===== eID %s; %s =====', str(eid), session_path.relative_to(ROOT))
+    flag = flag_path.joinpath(session_path.relative_to(ROOT))
+    if flag.exists():
+        _logger.critical('Skipping %s; incomplete process', session_path.relative_to(ROOT))
+        return
+    else:
+        flag.touch()
     print(tup)
 
     one = OneSdsc(
@@ -167,6 +172,7 @@ def process_one_session(tup, processed=None, processed_paths=None):
             except Exception as e:
                 _logger.error(f'Error cleaning up task {task.name} for {eid}: {e}')
     processed[eid] = err
+    flag.unlink()
 
 
 def group_by_subject(run_list):
@@ -223,6 +229,7 @@ def main():
     parser.add_argument('--n-sessions', type=int, default=2,
                         help='Number of sessions to process (default: 2)')
     parser.add_argument('--n-subjects', type=int)
+    parser.add_argument('--n-jobs', type=int, default=N_JOBS)
     parsed = parser.parse_args()
 
     with FileLock(RUN_LIST, timeout_action='raise'):
@@ -235,6 +242,12 @@ def main():
             l_before= len(run_list)
             run_list = list(filter(lambda x: x[0] not in _processed, run_list))
             _logger.info(f'Skipping {l_before - len(run_list)} sessions processed but not registered.')
+
+    try:
+        flag = Path(__file__).resolve().with_name('processing')
+    except NameError:
+        flag = Path.home().joinpath('Documents', 'PYTHON', 'sdsc-slurms', '2025-05_trials-extraction', 'processing')
+    flag.mkdir(exist_ok=True)
 
     manager = Manager()
     # Initialize shared dictionaries for processed results and paths
@@ -249,17 +262,18 @@ def main():
                 to_run.append((subject, list(run_list_)))
             else:
                 break
-        f = partial(process_one_subject, processed=processed, processed_paths=processed_paths)
+        f = partial(process_one_subject, processed=processed, processed_paths=processed_paths, flag_path=flag)
     else:
         n = parsed.n_sessions
         to_run = run_list[:n]
-        f = partial(process_one_session, processed=processed, processed_paths=processed_paths)
+        f = partial(process_one_session, processed=processed, processed_paths=processed_paths, flag_path=flag)
 
+    n_jobs = parsed.n_jobs
     t0 = time.time()
-    _logger.info('Starting processing of %i sessions with %i jobs...', len(to_run), N_JOBS)
-    with Pool(processes=N_JOBS) as pool:
+    _logger.info('Starting processing of %i sessions with %i jobs...', len(to_run), n_jobs)
+    with Pool(processes=n_jobs) as pool:
         results = pool.map(f, to_run)
-    _logger.info(f'Processing %i sessions with %i jobs took %.2g minutes', len(to_run), N_JOBS, (time.time() - t0) / 60)
+    _logger.info(f'Processing %i sessions with %i jobs took %.2g minutes', len(to_run), n_jobs, (time.time() - t0) / 60)
     # Save processed paths
     _logger.info('Saving processed results and paths...')
     save_processed(dict(processed), dict(processed_paths))
