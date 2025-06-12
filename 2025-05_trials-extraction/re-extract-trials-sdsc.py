@@ -105,6 +105,7 @@ def process_one_session(tup, processed=None, processed_paths=None, flag_path=Non
         tasks = list(filter(dyn.is_active_trials_task, dyn.get_trials_tasks(session_path, one=one)))
     except Exception as ex:
         processed[eid] = (ex,)
+        flag.unlink()
         return
 
     err = []
@@ -241,7 +242,7 @@ def main():
                 _processed = pickle.load(fp)
             l_before= len(run_list)
             run_list = list(filter(lambda x: x[0] not in _processed, run_list))
-            _logger.info(f'Skipping {l_before - len(run_list)} sessions processed but not registered.')
+            _logger.info(f'Skipping {l_before - len(run_list)} sessions processed.')
 
     try:
         flag = Path(__file__).resolve().with_name('processing')
