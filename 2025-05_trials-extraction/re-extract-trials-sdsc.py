@@ -74,7 +74,7 @@ def process_one_session(tup, processed=None, processed_paths=None, flag_path=Non
     processed[eid] = (Exception('Not processed'),)
     processed_paths[eid] = []
     _logger.info('===== eID %s; %s =====', str(eid), session_path.relative_to(ROOT))
-    flag = flag_path.joinpath(session_path.relative_to(ROOT))
+    flag = flag_path.joinpath(session_path.relative_to(ROOT).as_posix().replace('/', '.'))
     if flag.exists():
         _logger.critical('Skipping %s; incomplete process', session_path.relative_to(ROOT))
         return
