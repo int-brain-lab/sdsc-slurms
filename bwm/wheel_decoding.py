@@ -12,11 +12,25 @@ n_jobs = 48
 
 N_PSEUDO = 100
 N_PER_JOB = 4
-OUTPUT_DIR = '/mnt/home/owinter/ceph/bwm/wheel_rerun'
+OUTPUT_DIR = '/mnt/home/owinter/ceph/bwm/wheel_rerun_mismatch'
 TARGET = 'wheel-velocity'
 
-WORKER_ID, N_WORKERS = (2, 3)  # 0-based worker id
-job_list = np.arange(1, 3000 + 1)[WORKER_ID::N_WORKERS]
+# this was my original share of the jobs
+# WORKER_ID, N_WORKERS = (2, 3)  # 0-based worker id
+# job_list = np.arange(1, 3000 + 1)[WORKER_ID::N_WORKERS]
+
+# after trials mismatch, missing sesssions and saturated sessions update this needs a re-run
+# this is the run that takes care of the saturation around the wheel events
+#ia = [130,  63,  58, 124, 118, 122, 146, 153,  44,  27, 151,  11,  39, 38, 154, 114, 156,  12,  34]
+# this is the run that takes care of the aligned channel locations
+ia = [ 94,  58,  15, 194,  33, 108, 104,  57,  26,  99,   9,  27,  29,
+         8,  11,  13, 168,  14,  49,  50,  90, 132,  60,  12,  34]
+# the intersection of the 2 runs did not overwrite, so this is the 3d run
+ia = [58, 27, 11, 12, 34]
+
+job_list = []
+for ises in ia:
+    job_list.extend(list(range(ises * 25 + 1, ises * 25 + 25 + 1)))
 
 
 # job_list = np.load('/mnt/home/owinter/Documents/sdsc-slurms/bwm/jobs_remaining.npy')
