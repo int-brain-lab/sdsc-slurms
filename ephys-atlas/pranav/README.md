@@ -28,6 +28,8 @@ Each line is the exact command that each task will run on SDSC.
 ```bash
 module load disBatch
 sbatch -n 96 -c 1 -p gen -t 23:59:59 disBatch -p v1_run --fill Full_Task_file
+#To relaunch for the failed jobs
+#sbatch -n 48 -c 1 -p gen -t 1-0 disBatch -p v2_run -r v1_run/Full_Task_file_disBatch_250826133018_373_status.txt  -R --fill Full_Task_file 
 ```
 
 # Aggregation.
