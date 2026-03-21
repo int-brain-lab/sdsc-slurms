@@ -3,6 +3,7 @@ os.environ['TQDM_DISABLE'] = '1'
 from pathlib import Path
 import joblib
 import traceback
+import time
 
 import pandas as pd
 from deploy.iblsdsc import OneSdsc as ONE
@@ -18,7 +19,7 @@ pids = [str(pi) for pi in df_insertions.index.get_level_values(1)]
 def cell_features(pid):
     output_path = OUTPUT_PATH.joinpath(pid)
     output_path.mkdir(parents=True, exist_ok=True)
-    one = ONE(mode='local', tables_dir=TABLES_DIR)
+    one = ONE()
     ssl = SpikeSortingLoader(one=one, pid=pid)
     spikes, clusters, channels = ssl.load_spike_sorting()
     df_clusters = pd.DataFrame(ssl.merge_clusters(spikes, clusters, channels))
@@ -49,5 +50,15 @@ def cell_features_wrapper(pid):
         traceback_path = OUTPUT_PATH.joinpath(f'{pid}.error')
         traceback_path.write_text(traceback.format_exc())
 
+
 jobs = [joblib.delayed(cell_features_wrapper)(pid=pid) for pid in pids]
-joblib.Parallel(n_jobs=48)(jobs)
+
+def worker_init():
+    delay = (os.getpid() % 100)  # 0..99 seconds-ish, deterministic per process
+    time.sleep(delay)
+
+joblib.Parallel(
+    n_jobs=48,
+    backend="loky",
+    initializer=worker_init,
+)(jobs)
