@@ -14,8 +14,12 @@ import ephysatlas.cells
 TABLES_DIR = Path('/mnt/home/owinter/Documents/cache_tables/one_cache-ibl_neuropixel_brainwide_01')
 OUTPUT_PATH = Path(f'/mnt/home/owinter/ceph/ea/cells')
 
-df_insertions = pd.read_parquet(TABLES_DIR.joinpath('insertions.pqt'))
-pids = [str(pi) for pi in df_insertions.index.get_level_values(1)]
+file_insertions = TABLES_DIR.parent.joinpath('df_probe_details_ibl_neuropixel_brainwide_01.pqt')
+
+df_insertions = pd.read_parquet(file_insertions)
+pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
+
+
 def cell_features(pid):
     output_path = OUTPUT_PATH.joinpath(pid)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -44,6 +48,8 @@ def cell_features(pid):
     )
 
 def cell_features_wrapper(pid):
+    if OUTPUT_PATH.exists:
+        return
     try:
         cell_features(pid)
     except Exception:
