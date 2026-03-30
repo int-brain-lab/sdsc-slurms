@@ -4,6 +4,7 @@ from pathlib import Path
 import joblib
 import traceback
 import time
+import ibldsp.voltage
 
 import pandas as pd
 from deploy.iblsdsc import OneSdsc as ONE
@@ -11,8 +12,18 @@ from brainbox.io.one import SpikeSortingLoader
 
 import ephysatlas.cells
 
+EXCLUDES = [
+    '1122230f-42b8-45f9-ad7e-00c27ae087c8',  # dartsort error
+    '1dd218c9-ac97-4d91-80d0-a8a660bf7395',  # dartsort broadcast
+    '316a733a-5358-4d1d-9f7f-179ba3c90adf',  # dartsort error
+    '71a92c54-69f0-488b-ae2a-cb6c1524233c',  # dartsort error
+    '80494687-eb74-43c6-801c-e99fd6621d51',  # dartsort broadcast
+    'fb76fd5c-0b91-41f2-9b94-0f64b62396cb',  # dartsort broadcast
+]
+
 TABLES_DIR = Path('/mnt/home/owinter/Documents/cache_tables/one_cache-ibl_neuropixel_brainwide_01')
 OUTPUT_PATH = Path(f'/mnt/home/owinter/ceph/ea/cells')
+Q = 10
 
 file_insertions = TABLES_DIR.parent.joinpath('df_probe_details_ibl_neuropixel_brainwide_01.pqt')
 
@@ -20,8 +31,21 @@ df_insertions = pd.read_parquet(file_insertions)
 pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
 
 
-def cell_features(pid):
+def resample_lfp(pid):
+    file_rsamp_lfp = OUTPUT_PATH.joinpath(pid, 'lf_resampled.bin')
+    if not file_rsamp_lfp.exists():
+        one = ONE()
+        ssl = SpikeSortingLoader(one=one, pid=pid)
+        sr = ssl.raw_electrophysiology(band='lf', stream=False)
+        channel_labels = ibldsp.voltage.detect_bad_channels_cbin(sr, display=False)
+        ibldsp.voltage.resample_denoise_lfp_cbin(
+            lf_file=sr, output=file_rsamp_lfp, channel_labels=channel_labels, q=Q)
+
+
+def stpc(pid):
     output_path = OUTPUT_PATH.joinpath(pid)
+    if output_path.joinpath('stpc.png').exists():
+        return
     output_path.mkdir(parents=True, exist_ok=True)
     one = ONE()
     ssl = SpikeSortingLoader(one=one, pid=pid)
@@ -48,16 +72,15 @@ def cell_features(pid):
     )
 
 def cell_features_wrapper(pid):
-    if OUTPUT_PATH.exists:
-        return
     try:
-        cell_features(pid)
+        # stpc(pid)
+        resample_lfp(pid)
     except Exception:
-        traceback_path = OUTPUT_PATH.joinpath(f'{pid}.error')
+        traceback_path = OUTPUT_PATH.joinpath(f'{pid}_stpc.error')
         traceback_path.write_text(traceback.format_exc())
 
 
-jobs = [joblib.delayed(cell_features_wrapper)(pid=pid) for pid in pids]
+jobs = [joblib.delayed(cell_features_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
 
 def worker_init():
     delay = (os.getpid() % 100)  # 0..99 seconds-ish, deterministic per process

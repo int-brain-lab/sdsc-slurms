@@ -1,0 +1,28 @@
+# %%
+from pathlib import Path
+import tqdm
+
+import pandas as pd
+import numpy as np
+
+OUTPUT_PATH = Path(f'/mnt/home/owinter/ceph/ea/cells')
+
+df_clusters = []
+stpc = []
+for fil in tqdm.tqdm(OUTPUT_PATH.rglob('clusters.pqt')):
+    _df_clusters = pd.read_parquet(fil)
+    _df_clusters['pid'] = fil.parent.parts[-1]
+    df_clusters.append(_df_clusters)
+    stpc.append(np.load(fil.parent.joinpath('stpc.npy')))
+
+
+df_clusters = pd.concat(df_clusters)
+stpc = np.concatenate(stpc)
+df_clusters_good = df_clusters.loc[df_clusters['bitwise_fail'] == 0, :]
+# %%
+
+
+df_clusters.to_parquet(OUTPUT_PATH.joinpath('all_clusters.pqt'))
+df_clusters_good.to_parquet(OUTPUT_PATH.joinpath('good_clusters.pqt'))
+np.save(OUTPUT_PATH.joinpath('good_stpc.npy'), stpc)
+
