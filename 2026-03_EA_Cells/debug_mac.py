@@ -118,3 +118,38 @@ df_insertions = pd.read_parquet(file_insertions)
 np.sum(df_insertions['histology'] != '')
 
 # rsync -av --progress -e ssh /Users/olivier/Documents/datadisk/paper-ephys-atlas/s3/project-metadata/df_probe_details_ibl_neuropixel_brainwide_01.pqt popeye:/mnt/home/owinter/Documents/cache_tables
+
+
+
+# %%
+from pathlib import Path
+import numpy as np
+from one.api import ONE
+from brainbox.io.one import SpikeSortingLoader
+
+one = ONE()
+WORKDIR = Path('/mnt/home/owinter/ceph/ea/cells')
+WORKDIR = Path.home().joinpath('scratch/lfp')
+
+
+for file_lfp in WORKDIR.rglob('lf_resampled.bin'):
+    print(file_lfp)
+    pid = file_lfp.parts[-2]
+    ssl = SpikeSortingLoader(one=one, pid=pid)
+    sr = ssl.raw_electrophysiology(band='lf', stream=False)
+    ns = file_lfp.stat().st_size / 2 / (sr.nc - sr.nsync)
+    assert ns % 1 == 0
+    a = np.memmap(file_lfp, dtype='float16', mode='r', shape=(int(ns), sr.nc - sr.nsync))
+    np.save(file_lfp.with_suffix('.npy'), a)
+    file_lfp.unlink()
+    break
+
+# %%
+import spikeglx
+from viewephys.gui import viewephys
+sr = spikeglx.Reader('/Users/olivier/scratch/lfp/1e104bf4-7a24-4624-a5b2-c2c8289c0de7/lf_resampled.bin', nc=384, ns=ns, fs=250, dtype=np.float16)
+srr = spikeglx.Reader('/Users/olivier/scratch/lfp/1e104bf4-7a24-4624-a5b2-c2c8289c0de7/lf_resampled.npy', fs=250)
+
+np.testing.assert_array_equal(sr[:100, :], srr[:100, :])
+
+sr

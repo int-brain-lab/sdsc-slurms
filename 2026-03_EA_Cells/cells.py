@@ -32,7 +32,7 @@ pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
 
 
 def resample_lfp(pid):
-    file_rsamp_lfp = OUTPUT_PATH.joinpath(pid, 'lf_resampled.bin')
+    file_rsamp_lfp = OUTPUT_PATH.joinpath(pid, 'lf_resampled.npy')
     if not file_rsamp_lfp.exists():
         one = ONE()
         ssl = SpikeSortingLoader(one=one, pid=pid)
@@ -40,6 +40,25 @@ def resample_lfp(pid):
         channel_labels = ibldsp.voltage.detect_bad_channels_cbin(sr, display=False)
         ibldsp.voltage.resample_denoise_lfp_cbin(
             lf_file=sr, output=file_rsamp_lfp, channel_labels=channel_labels, q=Q)
+
+def stlfp(pid):
+    one = ONE()
+    ssl = SpikeSortingLoader(one=one, pid=pid)
+    spikes, clusters, channels = ssl.load_spike_sorting(dataset_types=['spikes.samples'])
+    df_clusters = pd.DataFrame(ssl.merge_clusters(spikes, clusters, channels))
+
+    file_rsamp_lfp = OUTPUT_PATH.joinpath(pid, 'lf_resampled.npy')
+    file_stlfp = OUTPUT_PATH.joinpath(pid, 'stlfp.npy')
+
+    ephysatlas.cells.spike_triggered_lfp(
+        file_rsamp_lfp,
+        spikes,
+        df_clusters,
+        event_window=(-0.5, 0.5),
+        fs_ap=30_000,
+        fs=2500 // 10,
+        file_stlfp=file_stlfp
+    )
 
 
 def stpc(pid):
@@ -74,11 +93,11 @@ def stpc(pid):
 def cell_features_wrapper(pid):
     try:
         # stpc(pid)
-        resample_lfp(pid)
+        # resample_lfp(pid)
+        stlfp(pid)
     except Exception:
         traceback_path = OUTPUT_PATH.joinpath(f'{pid}_stpc.error')
         traceback_path.write_text(traceback.format_exc())
-
 
 jobs = [joblib.delayed(cell_features_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
 

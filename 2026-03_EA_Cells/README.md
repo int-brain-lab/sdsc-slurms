@@ -13,3 +13,6 @@ sbatch cells.sbatch
 
 
 rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cell_aggregates /Users/olivier/Documents/datadisk/paper-ephys-atlas/popeye
+
+
+find /mnt/home/owinter/ceph/ea/cells -name 'lf_resampled.bin' | wc -l
