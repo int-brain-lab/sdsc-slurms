@@ -9,11 +9,13 @@ OUTPUT_PATH = Path(f'/mnt/home/owinter/ceph/ea/cells')
 
 df_clusters = []
 stpc = []
+stlfp = []
 for fil in tqdm.tqdm(OUTPUT_PATH.rglob('clusters.pqt')):
     _df_clusters = pd.read_parquet(fil)
     _df_clusters['pid'] = fil.parent.parts[-1]
     df_clusters.append(_df_clusters)
     stpc.append(np.load(fil.parent.joinpath('stpc.npy')))
+    stlfp.append(np.load(fil.parent.joinpath('stlfp.npy')))
 
 
 df_clusters = pd.concat(df_clusters)

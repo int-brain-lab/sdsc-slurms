@@ -19,6 +19,7 @@ EXCLUDES = [
     '71a92c54-69f0-488b-ae2a-cb6c1524233c',  # dartsort error
     '80494687-eb74-43c6-801c-e99fd6621d51',  # dartsort broadcast
     'fb76fd5c-0b91-41f2-9b94-0f64b62396cb',  # dartsort broadcast
+    'ce16c71a-f0a6-48b7-bc2f-430ff94df5de',  # spike sorting stuck Elbocal
 ]
 
 TABLES_DIR = Path('/mnt/home/owinter/Documents/cache_tables/one_cache-ibl_neuropixel_brainwide_01')
