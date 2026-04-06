@@ -16,8 +16,11 @@ Launch the compute
 
 
 ## Other useful commands (progress check / rsync)
-`rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cell_aggregates /Users/olivier/Documents/datadisk/paper-ephys-atlas/popeye`
 
+`rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cell_aggregates /Users/olivier/Documents/datadisk/paper-ephys-atlas/popeye`
+`rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cell_aggregates /mnt/s0/Data/paper-ephys-atlas/cells`
+
+Download the results on Mac / Elbocal
 
 `find /mnt/home/owinter/ceph/ea/cells -name 'lf_resampled.bin' | wc -l`
 
