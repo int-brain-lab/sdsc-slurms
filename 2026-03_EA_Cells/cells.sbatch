@@ -5,9 +5,8 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=500G
 #SBATCH --time=23:59:59
-#SBATCH -o /mnt/home/owinter/Documents/sdsc-slurms/2025-07_BWM_waveforms/_log_.%x_%j.out
-#SBATCH --mail-type=FAIL
-#SBATCH --mail-user=olivier.winter@internationalbrainlab.org
+#SBATCH -o /mnt/home/owinter/Documents/sdsc-slurms/2026-03_EA_Cells/_log_.%x_%j.out
+#SBATCH -e /mnt/home/owinter/Documents/sdsc-slurms/2026-03_EA_Cells/_log_.%x_%j.err
 
 PYTHON_EXEC=/mnt/home/owinter/Documents/ephys-atlas/.venv/bin/python
 PYTHON_SCRIPT=~/Documents/sdsc-slurms/2026-03_EA_Cells/cells.py
