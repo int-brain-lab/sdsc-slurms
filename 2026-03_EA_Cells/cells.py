@@ -1,3 +1,4 @@
+import argparse
 import os
 os.environ['TQDM_DISABLE'] = '1'
 from pathlib import Path
@@ -42,9 +43,16 @@ df_insertions = pd.read_parquet(file_insertions)
 pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
 
 
-def cell_features(pid):
+def cell_features(pid, overwrite=False):
     """
     Extract per-cluster features for one insertion and save to a single HDF5 file.
+
+    Parameters
+    ----------
+    pid : str
+        Probe insertion UUID.
+    overwrite : bool
+        If True, delete any existing output file and recompute.
 
     Outputs written to OUTPUT_PATH / pid / {pid}.h5:
       Arrays (h5py, gzip-compressed where large):
@@ -60,7 +68,10 @@ def cell_features(pid):
     """
     outdir = OUTPUT_PATH.joinpath(pid)
     outfile = outdir.joinpath(f'{pid}.h5')
-    if outfile.exists():
+    if overwrite:
+        outfile.unlink(missing_ok=True)
+        outdir.joinpath(f'{pid}.h5.tmp').unlink(missing_ok=True)
+    elif outfile.exists():
         return
 
     outdir.mkdir(parents=True, exist_ok=True)
@@ -199,15 +210,19 @@ def stpc(pid):
     )
 
 
-def cell_features_wrapper(pid):
+def cell_features_wrapper(pid, overwrite=False):
     try:
-        cell_features(pid)
+        cell_features(pid, overwrite=overwrite)
     except Exception:
         traceback_path = OUTPUT_PATH.joinpath(f'{pid}_cell_features.error')
         traceback_path.write_text(traceback.format_exc())
 
 
-jobs = [joblib.delayed(cell_features_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
+parser = argparse.ArgumentParser()
+parser.add_argument('--overwrite', action='store_true', help='recompute even if HDF5 already exists')
+args = parser.parse_args()
+
+jobs = [joblib.delayed(cell_features_wrapper)(pid=pid, overwrite=args.overwrite) for pid in pids if pid not in EXCLUDES]
 
 
 def worker_init():

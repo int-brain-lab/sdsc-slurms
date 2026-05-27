@@ -13,4 +13,4 @@ PYTHON_SCRIPT=~/Documents/sdsc-slurms/2026-03_EA_Cells/cells.py
 
 module load python/3.11
 
-$PYTHON_EXEC -u $PYTHON_SCRIPT
+$PYTHON_EXEC -u $PYTHON_SCRIPT $@  # pass --overwrite to recompute all

@@ -1,18 +1,21 @@
 ## Main commands
 Output directory, one folder per pid:
-`/mnt/home/owinter/ceph/ea/cells`
+`cd /mnt/home/owinter/ceph/ea/cells`
 
 Output directory for aggregate tables
-`/mnt/home/owinter/ceph/ea/cell_aggregates`
+`cd /mnt/home/owinter/ceph/ea/cell_aggregates`
 
 Code directory on Popeye:
-`/mnt/home/owinter/Documents/sdsc-slurms/2026-03_EA_Cells`
-`/mnt/home/owinter/Documents/ephys-atlas`
+`cd /mnt/home/owinter/Documents/sdsc-slurms/2026-03_EA_Cells`
+`cd /mnt/home/owinter/Documents/ephys-atlas`
 
 
 # 24cb326a-e04d-4a18-a96d-1edef60cc40b
 Launch the compute
-`sbatch cells.sbatch`
+`cd /mnt/home/owinter/ceph/ea/cells && sbatch cells.sbatch`
+
+Re-run all PIDs, overwriting existing HDF5 files:
+`cd /mnt/home/owinter/ceph/ea/cells && sbatch cells.sbatch --overwrite`
 
 
 ## Other useful commands (progress check / rsync)
