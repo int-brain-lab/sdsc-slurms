@@ -64,6 +64,7 @@ def cell_features(pid):
         return
 
     outdir.mkdir(parents=True, exist_ok=True)
+    outfile_tmp = outdir.joinpath(f'{pid}.h5.tmp')
     one = ONE()
     ssl = SpikeSortingLoader(one=one, pid=pid)
     spikes, clusters, channels = ssl.load_spike_sorting()
@@ -116,8 +117,10 @@ def cell_features(pid):
     )
     df_clusters_extended = pd.DataFrame(bm, index=df_clusters.index, columns=['burstiness', 'memory'])
 
-    # Save to HDF5
-    with h5py.File(outfile, 'w') as h5:
+    # Write to a tmp file first; rename to final path only on full success.
+    # This ensures a killed/crashed job never leaves a partial file that the
+    # skip-if-exists guard would silently accept on the next run.
+    with h5py.File(outfile_tmp, 'w') as h5:
         h5.create_dataset('avg_waveforms', data=avg_waveforms_flat,
                           compression='gzip', compression_opts=4)
         h5.create_dataset('avg_waveform_peak_channel', data=avg_waveform_peak_channel)
@@ -128,10 +131,11 @@ def cell_features(pid):
         h5.attrs['n_clusters'] = n_clusters
         h5.attrs['n_good'] = n_good
         h5.attrs['nc'] = nc
-    df_clusters.to_hdf(outfile, key='df_clusters', mode='a', format='fixed')
-    df_avg_waveforms_index.to_hdf(outfile, key='avg_waveforms_index', mode='a', format='fixed')
-    df_wf_features.to_hdf(outfile, key='avg_waveform_features', mode='a', format='fixed')
-    df_clusters_extended.to_hdf(outfile, key='df_clusters_extended', mode='a', format='fixed')
+    df_clusters.to_hdf(outfile_tmp, key='df_clusters', mode='a', format='fixed')
+    df_avg_waveforms_index.to_hdf(outfile_tmp, key='avg_waveforms_index', mode='a', format='fixed')
+    df_wf_features.to_hdf(outfile_tmp, key='avg_waveform_features', mode='a', format='fixed')
+    df_clusters_extended.to_hdf(outfile_tmp, key='df_clusters_extended', mode='a', format='fixed')
+    outfile_tmp.rename(outfile)
 
 
 def resample_lfp(pid):
