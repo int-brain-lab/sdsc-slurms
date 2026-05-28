@@ -25,6 +25,7 @@ EXCLUDES = [
     '80494687-eb74-43c6-801c-e99fd6621d51',  # dartsort broadcast
     'fb76fd5c-0b91-41f2-9b94-0f64b62396cb',  # dartsort broadcast
     'ce16c71a-f0a6-48b7-bc2f-430ff94df5de',  # spike sorting stuck Elbocal
+    'f362c84f-8d9a-4d5b-8439-055ae936fdff',  # spike sorting stuck Elbocal
 ]
 
 TABLES_DIR = Path('/mnt/home/owinter/Documents/cache_tables/one_cache-ibl_neuropixel_brainwide_01')
@@ -228,7 +229,6 @@ jobs = [joblib.delayed(cell_features_wrapper)(pid=pid, overwrite=args.overwrite)
 def worker_init():
     delay = (os.getpid() % 100)  # 0..99 s stagger to avoid thundering-herd on ONE auth
     time.sleep(delay)
-
 
 joblib.Parallel(
     n_jobs=48,

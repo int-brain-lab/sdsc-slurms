@@ -12,7 +12,7 @@ Code directory on Popeye:
 
 # 24cb326a-e04d-4a18-a96d-1edef60cc40b
 Launch the compute
-`cd /mnt/home/owinter/ceph/ea/cells && sbatch cells.sbatch`
+`cd /mnt/home/owinter/Documents/sdsc-slurms/2026-03_EA_Cells && sbatch cells.sbatch`
 
 Re-run all PIDs, overwriting existing HDF5 files:
 `cd /mnt/home/owinter/ceph/ea/cells && sbatch cells.sbatch --overwrite`
