@@ -20,8 +20,10 @@ Re-run all PIDs, overwriting existing HDF5 files:
 
 ## Other useful commands (progress check / rsync)
 
-`rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cell_aggregates /Users/olivier/Documents/datadisk/paper-ephys-atlas/popeye`
-`rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cell_aggregates /mnt/s0/Data/paper-ephys-atlas/cells`
+`rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cells_aggregates /Users/olivier/Documents/datadisk/paper-ephys-atlas/cells_aggregates`
+`rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cells_aggregates_f32 /Users/olivier/Documents/datadisk/paper-ephys-atlas/cells_aggregates_f32`
+
+`rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cells_aggregates /mnt/s0/Data/paper-ephys-atlas/cells`
 
 Download the results on Mac / Elbocal
 
