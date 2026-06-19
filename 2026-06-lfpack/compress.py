@@ -73,8 +73,13 @@ def compress_pid(pid, overwrite=False):
         for f in files.values():
             f.unlink(missing_ok=True)
 
-    # Cadzow checkpoint is kept for further potential analysis
-    cadzow_file = out_dir.joinpath('lf_resampled_car_cadzow.npy')
+    # Cadzow checkpoint: fast local NVMe during computation, archived to ceph afterwards.
+    # If the ceph archive exists from a prior run, seed scratch from it to skip recomputation.
+    cadzow_scratch  = scratch_dir.joinpath('lf_resampled_car_cadzow.npy')
+    cadzow_archive  = out_dir.joinpath('lf_resampled_car_cadzow.npy')
+    if cadzow_archive.exists() and not cadzow_scratch.exists():
+        shutil.copy2(cadzow_archive, cadzow_scratch)
+        print(f'{pid[:8]} Cadzow: seeded from ceph archive', flush=True)
 
     try:
         one = ONE()
@@ -90,14 +95,16 @@ def compress_pid(pid, overwrite=False):
             compress_bin_to_h5(
                 sr.file_bin, files[lbl],
                 q=Q,
-                cadzow_checkpoint_file=cadzow_file,
+                cadzow_checkpoint_file=cadzow_scratch,
                 cadzow_kwargs=CADZOW_KWARGS,
                 n_jobs=N_INNER,
                 **params,
             )
             print(f'{pid[:8]} {lbl}: done in {time.perf_counter() - t0:.1f} s', flush=True)
 
-        done_file.touch()
+        if cadzow_scratch.exists() and not cadzow_archive.exists():
+            shutil.copy2(cadzow_scratch, cadzow_archive)
+            print(f'{pid[:8]} Cadzow: archived to ceph', flush=True)
         out_dir.joinpath(f'{pid}_compress.error').unlink(missing_ok=True)
 
     except Exception:

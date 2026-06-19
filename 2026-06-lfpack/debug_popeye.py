@@ -19,15 +19,11 @@ PARAMS = {
 }
 CADZOW_KWARGS = dict(rank=5, niter=1, fmax=None, nswx=64, gap_threshold=2.0, ppca_k=2.0)
 
-SCRATCH_ROOT = Path(os.environ.get('SCRATCH_ROOT', '/scratch/lfpack_debug'))
-OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/lfpack')
-
-scratch_dir = SCRATCH_ROOT.joinpath(pid)
-scratch_dir.mkdir(parents=True, exist_ok=True)
-cadzow_file = scratch_dir.joinpath('lf_resampled_car_cadzow.npy')
+OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/ea/cells')
 
 out_dir = OUTPUT_ROOT.joinpath(pid)
 out_dir.mkdir(parents=True, exist_ok=True)
+cadzow_file = out_dir.joinpath("lf_resampled_car_cadzow.npy")
 
 one = ONE()
 ssl = SpikeSortingLoader(one=one, pid=pid)
