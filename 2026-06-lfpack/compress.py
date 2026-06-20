@@ -128,7 +128,10 @@ args = parser.parse_args()
 
 df_insertions = pd.read_parquet(FILE_INSERTIONS)
 pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
-print(f'Queuing {len(pids)} PIDs  ({N_OUTER} outer × {N_INNER} inner cores)', flush=True)
+task_id = int(os.environ.get('SLURM_ARRAY_TASK_ID', 0))
+n_tasks = int(os.environ.get('SLURM_ARRAY_TASK_COUNT', 1))
+pids = pids[task_id::n_tasks]
+print(f'Task {task_id}/{n_tasks}: queuing {len(pids)} PIDs  ({N_OUTER} outer × {N_INNER} inner cores)', flush=True)
 
 jobs = [joblib.delayed(compress_pid)(pid=pid, overwrite=args.overwrite) for pid in pids]
 joblib.Parallel(n_jobs=N_OUTER, backend='loky', initializer=worker_init)(jobs)
