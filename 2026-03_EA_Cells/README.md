@@ -38,3 +38,14 @@ Each folder is named by the pid and contains:
     stlfp.npy
     stpc.npy
     stpc.png
+
+
+## Computation timin
+```python
+[
+    ('2026-06-20T21:30:00', 0)
+    ('2026-06-21T16:50:00', 213),
+    ('2026-06-22T20:30:00', 464),
+] 
+# 11 per hour
+```

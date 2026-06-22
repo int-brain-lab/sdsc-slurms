@@ -37,7 +37,7 @@ PARAMS = {
     'default':    dict(epsilon=150.0, alpha=28.0),
     'aggressive': dict(epsilon=450.0, alpha=96.0),
 }
-CADZOW_KWARGS = dict(rank=5, niter=1, fmax=None, nswx=64, gap_threshold=2.0, ppca_k=2.0)
+CADZOW_KWARGS = dict(rank=5, niter=1, fmax=None, nswx=64, ovx=32, gap_threshold=2.0, ppca_k=2.0)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRATCH_ROOT = Path(os.environ.get('SCRATCH_ROOT', '/scratch/lfpack_local'))
