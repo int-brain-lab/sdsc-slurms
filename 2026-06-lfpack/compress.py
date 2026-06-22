@@ -40,7 +40,7 @@ PARAMS = {
 CADZOW_KWARGS = dict(rank=5, niter=1, fmax=None, nswx=64, ovx=32, gap_threshold=2.0, ppca_k=2.0)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-SCRATCH_ROOT = Path(os.environ.get('SCRATCH_ROOT', '/scratch/lfpack_local'))
+SCRATCH_ROOT = Path(os.environ.get('SCRATCH_ROOT', '/tmp/lfpack_local'))
 OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/ea/cells')
 TABLES_DIR   = Path('/mnt/home/owinter/Documents/cache_tables/one_cache-ibl_neuropixel_brainwide_01')
 FILE_INSERTIONS = TABLES_DIR.parent.joinpath('df_probe_details_ibl_neuropixel_brainwide_01.pqt')
