@@ -66,12 +66,19 @@ def compress_pid(pid, overwrite=False):
         'default':    out_dir.joinpath('lf_compressed.h5'),
         'aggressive': out_dir.joinpath('lf_compressed_aggressive.h5'),
     }
-    if files['default'].exists() and files['aggressive'].exists() and not overwrite:
+    # lf_compressed_aggressive.h5 is the sole completion sentinel: it is written
+    # last via atomic rename (*.h5tmp → *.h5) so a hard kill never leaves a
+    # half-written file that looks done.
+    if files['aggressive'].exists() and not overwrite:
         return
 
     if overwrite:
         for f in files.values():
             f.unlink(missing_ok=True)
+
+    # Remove any stale tmp files left by a prior interrupted run.
+    for f in files.values():
+        f.with_suffix('.h5tmp').unlink(missing_ok=True)
 
     # Cadzow checkpoint: fast local NVMe during computation, archived to ceph afterwards.
     # If the ceph archive exists from a prior run, seed scratch from it to skip recomputation.
@@ -90,16 +97,18 @@ def compress_pid(pid, overwrite=False):
             if files[lbl].exists():
                 print(f'{pid[:8]} {lbl}: exists, skipping', flush=True)
                 continue
+            h5tmp = files[lbl].with_suffix('.h5tmp')
             print(f'{pid[:8]} {lbl}: compressing …', flush=True)
             t0 = time.perf_counter()
             compress_bin_to_h5(
-                sr.file_bin, files[lbl],
+                sr.file_bin, h5tmp,
                 q=Q,
                 cadzow_checkpoint_file=cadzow_scratch,
                 cadzow_kwargs=CADZOW_KWARGS,
                 n_jobs=N_INNER,
                 **params,
             )
+            h5tmp.rename(files[lbl])  # atomic: sentinel only appears on success
             print(f'{pid[:8]} {lbl}: done in {time.perf_counter() - t0:.1f} s', flush=True)
 
         if cadzow_scratch.exists() and not cadzow_archive.exists():
