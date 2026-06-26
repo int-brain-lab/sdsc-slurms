@@ -69,7 +69,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    pids = find_ready_pids(args.output_root)
+    pids = find_ready_pids(args.output_root)[:10]
     log.info(f'PIDs: {pids[:5]}{"…" if len(pids) > 5 else ""}')
 
     for pass_name in args.passes:
