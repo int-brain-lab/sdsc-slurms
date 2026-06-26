@@ -3,7 +3,7 @@
 #SBATCH --job-name="lfpack"
 #SBATCH --cpus-per-task=48
 #SBATCH --ntasks=1
-#SBATCH --array=0-2
+#SBATCH --array=0-1
 #SBATCH --time=3-00:00:00
 #SBATCH -o /mnt/home/owinter/Documents/sdsc-slurms/2026-06-lfpack/_log_.%x_%A_%a.out
 #SBATCH -e /mnt/home/owinter/Documents/sdsc-slurms/2026-06-lfpack/_log_.%x_%A_%a.err

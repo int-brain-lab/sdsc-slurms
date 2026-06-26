@@ -88,6 +88,7 @@ def compress_pid(pid, overwrite=False):
         shutil.copy2(cadzow_archive, cadzow_scratch)
         print(f'{pid[:8]} Cadzow: seeded from ceph archive', flush=True)
 
+    out_dir.joinpath(f'{pid}_compress.error').unlink(missing_ok=True)
     try:
         one = ONE()
         ssl = SpikeSortingLoader(one=one, pid=pid)
