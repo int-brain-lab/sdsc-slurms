@@ -224,7 +224,10 @@ def fit_pid(pid: str, outdir: Path, source: str, n_perm: int, n_folds: int,
     Returns a small status dict; large arrays are written to disk and freed here.
     ``stagger`` only bites on the worker's first PID (see :func:`_make_one`).
     """
-    if not overwrite and outdir.joinpath("scores", f"{pid}_band.parquet").exists():
+    # resume only when *both* families are on disk: band is saved before raw, so a
+    # PID interrupted between the two would otherwise be skipped with raw missing.
+    scores = outdir.joinpath("scores")
+    if not overwrite and all(scores.joinpath(f"{pid}_{k}.parquet").exists() for k in ("band", "raw")):
         return {"pid": pid, "status": "skip"}
     try:
         one = _make_one(stagger)

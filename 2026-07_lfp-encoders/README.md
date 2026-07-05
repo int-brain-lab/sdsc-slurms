@@ -53,15 +53,20 @@ wheel gap, int-brain-lab/ibl-ai-agent#18).
    targets (the code sums adjacent electrodes to `nc`; assert shapes on a smoke run).
 
 ## Run
+Always via `sbatch` (a compute node): the band family builds a multi-GB `Y` per worker
+and will get OOM-killed on a login node. Download the archive first (see Setup).
 ```bash
-# smoke test: a few PIDs, one source
-sbatch encode.sbatch --lfp-source default --limit 8 --workers 4
+# fast smoke: few PIDs, cheap null — validates the whole path (design→targets→solve→save)
+sbatch encode.sbatch --lfp-source default --limit 4 --workers 4 --n-perm 2 --stagger 2
 # full run per source (single node as configured; widen --array in the sbatch to stripe across nodes)
 sbatch encode.sbatch --lfp-source default
 sbatch encode.sbatch --lfp-source aggressive
 sbatch encode.sbatch --lfp-source uncompressed
 ```
-Resumable: PIDs with an existing `<pid>_band.parquet` under the source's outdir are skipped.
+Resumable: PIDs with **both** `<pid>_band.parquet` and `<pid>_raw.parquet` under the
+source's outdir are skipped (a PID interrupted mid-fit re-runs).
+(The fast smoke's `--n-perm 2` scores are throwaway — overwrite them with the full run, or
+point `--outdir` elsewhere for the smoke.)
 
 Each worker builds **one** `OneSdsc` and reuses it for every PID it handles (rather than
 reconnecting per PID), and its first connection is jittered by up to `--stagger` seconds
