@@ -26,4 +26,6 @@ PYTHON_SCRIPT=~/Documents/sdsc-slurms/2026-07_lfp-encoders/encode.py
 
 module load python/3.11
 
-$PYTHON_EXEC -u $PYTHON_SCRIPT $@  # e.g. --lfp-source aggressive [--overwrite] [--limit N]`
+# --workers 42 is the sbatch default (48-core node, ~6 GB/worker); an explicit
+# --workers in the passed args overrides it (argparse: last value wins).
+$PYTHON_EXEC -u $PYTHON_SCRIPT --workers 42 "$@"  # e.g. --lfp-source aggressive [--overwrite] [--limit N]
