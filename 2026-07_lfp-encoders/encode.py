@@ -137,13 +137,19 @@ def _grid_source(source: str) -> str:
 def available_pids(source: str) -> list[str]:
     """PIDs fittable for ``source`` (the recording universe).
 
-    Compressed tiers list the PIDs packed into the consolidated archive; the
-    uncompressed tier lists PIDs whose Cadzow checkpoint is on disk.
+    Compressed tiers list the PIDs packed into the consolidated archive. The
+    uncompressed tier intersects the on-disk Cadzow checkpoints with the default
+    archive's PIDs: it borrows that archive's grid/channels (so a PID absent from it
+    can't be fitted anyway), and the intersection keeps all three tiers over the same
+    BWM PID set for a like-for-like comparison. ``cells/`` holds non-BWM checkpoints
+    too, so the raw glob (~1099) is a superset of the ~700 BWM insertions.
     """
-    if source == UNCOMPRESSED:
-        return sorted(p.parent.name for p in LFP_CELLS_ROOT.glob(f"*/{CADZOW_NPY}"))
     from lfpack import LFPackReader
 
+    if source == UNCOMPRESSED:
+        cadzow = {p.parent.name for p in LFP_CELLS_ROOT.glob(f"*/{CADZOW_NPY}")}
+        archive = set(LFPackReader.recordings(str(compressed_h5("default"))))
+        return sorted(cadzow & archive)
     return sorted(LFPackReader.recordings(str(compressed_h5(source))))
 
 
