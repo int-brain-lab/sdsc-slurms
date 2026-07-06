@@ -74,7 +74,7 @@ COMPRESSED_FILES = {
 }
 SOURCES = (*COMPRESSED_FILES, UNCOMPRESSED)
 
-LAMBDAS = np.array([1e-1, 1e0, 1e1, 1e2, 1e3, 1e4])
+LAMBDAS = np.array([1e-1, 1e0, 1e1, 1e2, 1e3, 1e4, 1e5])  # 1e5 headroom: some PIDs already sat at the old 1e4 ceiling
 N_BASIS = 10
 
 
@@ -224,11 +224,25 @@ def build_design(pid: str, eid: str, source: str, one) -> design_mod.Design:
 
 
 def fit_pid(pid: str, outdir: Path, source: str, n_perm: int, n_folds: int,
-            overwrite: bool, stagger: float = 0.0) -> dict:
+            overwrite: bool, stagger: float = 0.0, lambda_mode: str = "per-band") -> dict:
     """Fit and persist both target families (band, raw) for one PID and source.
 
     Returns a small status dict; large arrays are written to disk and freed here.
     ``stagger`` only bites on the worker's first PID (see :func:`_make_one`).
+
+    Parameters
+    ----------
+    lambda_mode : {"per-band", "pooled"}, default "per-band"
+        ``"per-band"`` selects and fits a separate lambda per target group
+        (``band`` for ``kind="band"``; degrades to a single, no-op group for
+        ``kind="raw"``) via ``select_lambda_robust``/``solve_encoding_grouped``
+        -- fixes the collapse documented in PLAN.md, where one pooled,
+        median-selected lambda occasionally under-regularises an entire
+        insertion (the selection criterion is blind to a collapsing target
+        subset, and a single lambda then has to serve every band at once).
+        ``"pooled"`` is the original behaviour (``select_lambda``/
+        ``solve_encoding``), kept for direct A/B comparison against the
+        already-archived ``results_bwm_cluster`` runs.
     """
     # resume only when *both* families are on disk: band is saved before raw, so a
     # PID interrupted between the two would otherwise be skipped with raw missing.
@@ -241,9 +255,15 @@ def fit_pid(pid: str, outdir: Path, source: str, n_perm: int, n_folds: int,
         dsg = build_design(pid, eid, source, one)
         for kind in ("band", "raw"):
             tgt = make_targets_for(pid, source, kind)
-            lam, _ = solve_mod.select_lambda(dsg, tgt, LAMBDAS, n_folds=n_folds)
-            res = solve_mod.solve_encoding(dsg, tgt, lam=lam, n_folds=n_folds)
-            null = solve_mod.permutation_null_r2(dsg, tgt, n_perm=n_perm, lam=lam, n_folds=n_folds)
+            if lambda_mode == "per-band":
+                groups = tgt.target_meta["band"].to_numpy()
+                lam, _ = solve_mod.select_lambda_robust(dsg, tgt, LAMBDAS, groups=groups, n_folds=n_folds)
+                res = solve_mod.solve_encoding_grouped(dsg, tgt, lam, groups, n_folds=n_folds)
+                null = solve_mod.permutation_null_r2_grouped(dsg, tgt, lam, groups, n_perm=n_perm, n_folds=n_folds)
+            else:
+                lam, _ = solve_mod.select_lambda(dsg, tgt, LAMBDAS, n_folds=n_folds)
+                res = solve_mod.solve_encoding(dsg, tgt, lam=lam, n_folds=n_folds)
+                null = solve_mod.permutation_null_r2(dsg, tgt, n_perm=n_perm, lam=lam, n_folds=n_folds)
             rio.save_pid_result(res, outdir, null=null)
             del tgt, res, null
         return {"pid": pid, "status": "ok"}
@@ -266,6 +286,10 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--stagger", type=float, default=30.0,
                         help="max seconds of random delay before each worker's first ONE connection")
+    parser.add_argument("--lambda-mode", choices=["per-band", "pooled"], default="per-band",
+                        help="per-band (default): separate lambda per band, fixes the pooled-median "
+                             "collapse (see PLAN.md); pooled: original one-lambda-for-everything "
+                             "behaviour, for A/B comparison against results_bwm_cluster")
     args = parser.parse_args()
 
     # one-time pre-submit download of the consolidated archive(s) this source reads.
@@ -301,11 +325,12 @@ def main() -> None:
     if task_id == 0 and not outdir.joinpath("basis.npz").exists():
         one = _make_one()
         eid, _ = one.pid2eid(mine[0])
-        rio.save_shared(build_design(mine[0], eid, args.lfp_source, one), outdir, targets_mod.BANDS)
+        rio.save_shared(build_design(mine[0], eid, args.lfp_source, one), outdir, targets_mod.BANDS,
+                         extra={"lambda_mode": args.lambda_mode, "lambdas": LAMBDAS.tolist()})
 
     results = joblib.Parallel(n_jobs=args.workers, backend="loky")(
         joblib.delayed(fit_pid)(pid, outdir, args.lfp_source, args.n_perm, args.n_folds,
-                                args.overwrite, args.stagger)
+                                args.overwrite, args.stagger, args.lambda_mode)
         for pid in mine
     )
     ok = sum(r["status"] == "ok" for r in results)

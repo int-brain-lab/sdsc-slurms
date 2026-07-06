@@ -40,6 +40,7 @@ wheel gap, int-brain-lab/ibl-ai-agent#18).
    ```bash
    python encode.py --download --lfp-source default
    python encode.py --download --lfp-source aggressive
+   python encode.py --download --lfp-source uncompressed
    ```
    They land flat under `LFP_DATA_ROOT/` (e.g. `lf_compressed_all_bwm.h5`) via
    `one.remote.aws.s3_download_file` from the IBL public bucket. The `uncompressed`
@@ -55,18 +56,40 @@ wheel gap, int-brain-lab/ibl-ai-agent#18).
 ## Run
 Always via `sbatch` (a compute node): the band family builds a multi-GB `Y` per worker
 and will get OOM-killed on a login node. Download the archive first (see Setup).
+
+**Lambda selection defaults to `--lambda-mode per-band`** (one lambda fit per band
+instead of one pooled lambda for all ~288 targets) — see "Lambda fitting" below before
+resweeping; pass `--lambda-mode pooled` to reproduce the original `results_bwm_cluster`
+behaviour exactly.
 ```bash
 # fast smoke: few PIDs, cheap null — validates the whole path (design→targets→solve→save)
 sbatch encode.sbatch --lfp-source default --limit 4 --workers 4 --n-perm 2 --stagger 2
 # full run per source (single node as configured; widen --array in the sbatch to stripe across nodes)
-sbatch encode.sbatch --lfp-source default
-sbatch encode.sbatch --lfp-source aggressive
-sbatch encode.sbatch --lfp-source uncompressed
+# --outdir: point at a NEW directory, don't overwrite the archived results_bwm_cluster run
+sbatch encode.sbatch --lfp-source default --outdir ~/ceph/lfp-encoders/results_bwm_perband
+sbatch encode.sbatch --lfp-source aggressive --outdir ~/ceph/lfp-encoders/results_bwm_perband
+sbatch encode.sbatch --lfp-source uncompressed --outdir ~/ceph/lfp-encoders/results_bwm_perband
 ```
 Resumable: PIDs with **both** `<pid>_band.parquet` and `<pid>_raw.parquet` under the
 source's outdir are skipped (a PID interrupted mid-fit re-runs).
 (The fast smoke's `--n-perm 2` scores are throwaway — overwrite them with the full run, or
 point `--outdir` elsewhere for the smoke.)
+
+## Lambda fitting
+`select_lambda` (pooled) picks one lambda per `(PID, kind)` by maximising the *median*
+held-out R² across all ~288 targets at once — blind to a collapsing minority, and
+occasionally lets a whole insertion catastrophically overfit under compression (see
+`PLAN.md`/`index.qmd` "Result 5"). Fixed by:
+- `select_lambda_robust` — same candidate sweep, tail-aware objective (mean of R²
+  clipped to `[-1,1]`, not the raw median) plus a worst-case-quantile safety gate,
+  falling back to the largest grid lambda if nothing clears it.
+- `solve_encoding_grouped` / `permutation_null_r2_grouped` — actually *fit* a separate
+  lambda per band (one Cholesky solve per group) instead of forcing one lambda across
+  every band; exact-match-validated against the pooled functions when given a single
+  group.
+`encode.py --lambda-mode {per-band,pooled}` switches between them; `fit_pid`'s
+`lambda_mode` param does the same for direct calls. Each score row's `lam` column
+carries that row's own band's lambda now (see `results_io.save_pid_result`).
 
 Each worker builds **one** `OneSdsc` and reuses it for every PID it handles (rather than
 reconnecting per PID), and its first connection is jittered by up to `--stagger` seconds

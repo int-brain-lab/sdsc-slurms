@@ -85,7 +85,11 @@ def save_pid_result(
     Returns
     -------
     (Path, Path)
-        Paths to the written score parquet and kernel npz.
+        Paths to the written score parquet and kernel npz. The ``lam`` score column is
+        the scalar penalty for a plain ``solve_encoding`` fit, that row's own band's
+        penalty for a ``solve_encoding_grouped`` fit (via ``result.lam_by_group``), or
+        NaN for the (currently unused in this pipeline) per-regressor-group penalty
+        form of ``result.lam``.
     """
     outdir = Path(outdir)
     scores_dir = outdir.joinpath("scores")
@@ -96,7 +100,10 @@ def save_pid_result(
     scores = result.target_meta.copy()
     scores.insert(0, "pid", result.pid)
     scores.insert(1, "kind", result.kind)
-    scores["lam"] = float(result.lam) if not isinstance(result.lam, dict) else np.nan
+    if result.lam_by_group is not None:
+        scores["lam"] = scores["band"].map(result.lam_by_group).astype(float)
+    else:
+        scores["lam"] = float(result.lam) if not isinstance(result.lam, dict) else np.nan
     scores["r2_full"] = result.r2_full
     scores["r2_cv"] = result.r2_cv
     # Gated add-on groups vary per PID (~16 % lack wheel; pupil is coverage-gated);

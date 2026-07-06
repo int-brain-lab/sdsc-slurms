@@ -75,6 +75,25 @@ def raised_cosine_basis(
 
 
 # --- continuous-trace resampling ------------------------------------------
+# Minimum fraction of the LFP session a continuous trace's own timestamps must span
+# to be trusted as a regressor. Below this, np.interp's edge-clamping (see _resample)
+# leaves most samples pinned to a single boundary value; _zscore then divides by the
+# whole-trace std, which is deflated by that flat plateau and inflates the genuine
+# variation in the covered window to non-physiological z-scores (observed z~25 for a
+# session where the camera covered only the last 10%) -- a single such column can
+# destabilise the shared ridge solve for every target at once (see PROMPT_sstot_zero.md).
+MIN_CONTINUOUS_COVERAGE = 0.8
+
+
+def _coverage(t_src: np.ndarray, tvec: np.ndarray) -> float:
+    """Fraction of ``tvec``'s span actually covered by ``t_src``'s own time range."""
+    span = tvec[-1] - tvec[0]
+    if t_src.size == 0 or span <= 0:
+        return 0.0
+    covered = min(t_src[-1], tvec[-1]) - max(t_src[0], tvec[0])
+    return max(0.0, covered) / span
+
+
 def _resample(t_src: np.ndarray, v_src: np.ndarray, tvec: np.ndarray) -> np.ndarray:
     """Linearly resample ``v_src(t_src)`` onto ``tvec``, ignoring non-finite input."""
     good = np.isfinite(t_src) & np.isfinite(v_src)
@@ -248,13 +267,17 @@ def build_base_regressors(
 
     # continuous behaviour, resampled to the grid then standardised. Events are
     # the only universal group; wheel and pupil are gated add-ons included only
-    # when the session provides them (~16 % lack usable wheel), so the events
-    # core stays comparable across every insertion.
-    if cont.has_wheel:
+    # when the session provides them (~16 % lack usable wheel) *and* their own
+    # timestamps span most of the recording (MIN_CONTINUOUS_COVERAGE) -- a trace
+    # that only covers a slice of the session is mostly np.interp edge-clamping
+    # once resampled, which _zscore then amplifies into a non-physiological outlier
+    # column (see MIN_CONTINUOUS_COVERAGE docstring) -- so the events core stays
+    # comparable across every insertion.
+    if cont.has_wheel and _coverage(cont.wheel_t, tvec) >= MIN_CONTINUOUS_COVERAGE:
         wheel_vel = _resample(cont.wheel_t, cont.wheel_velocity, tvec)
         add("wheel", "wheel_vel", _zscore(wheel_vel))
         add("wheel", "wheel_speed", _zscore(np.abs(wheel_vel)))
-    if cont.has_pupil:
+    if cont.has_pupil and _coverage(cont.cam_t, tvec) >= MIN_CONTINUOUS_COVERAGE:
         add("pupil", "pupil", _zscore(_resample(cont.cam_t, cont.pupil_diameter, tvec)))
 
     return np.column_stack(cols).astype(np.float32), names, groups

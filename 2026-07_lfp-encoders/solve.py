@@ -73,6 +73,18 @@ def _sum(accs: list[Accumulator]) -> Accumulator:
     return total
 
 
+def _mask_targets(acc: Accumulator, mask: np.ndarray) -> Accumulator:
+    """Restrict an accumulator to a target (``Y`` column) subset.
+
+    ``xsum``/``xtx``/``n`` are X-side statistics (shared by every target) and
+    pass through unchanged; only the per-target fields (``ysum``/``ysq`` and
+    ``xty``'s target axis) are sliced. Used by :func:`solve_encoding_grouped`
+    to score each target-group's own fit from the one shared accumulator
+    (no re-streaming).
+    """
+    return Accumulator(acc.n, acc.xsum, acc.ysum[mask], acc.ysq[mask], acc.xtx, acc.xty[:, mask])
+
+
 def accumulate_folds(design: Design, targets: Targets, n_folds: int, chunk_samples: int) -> list[Accumulator]:
     """Stream the recording once into one accumulator per contiguous time-fold.
 
@@ -198,6 +210,12 @@ class EncodingResult:
     target_meta: object
     base_names: list[str] = field(default_factory=list)
     groups: dict[str, list[int]] = field(default_factory=dict)
+    # Set only by solve_encoding_grouped: target-group (e.g. band) -> lambda. Unlike
+    # `lam`'s dict form (regressor-group -> lambda, the X-side penalty in build_penalty),
+    # this is keyed by *target* group, so results_io can map it onto scores by
+    # target_meta["band"] unambiguously -- kept as a separate field rather than
+    # overloading `lam` so the two dict meanings can never be confused.
+    lam_by_group: dict[object, float] | None = None
 
 
 def _cv_r2(accs: list[Accumulator], design: Design, lam, keep: np.ndarray | None = None) -> np.ndarray:
@@ -281,6 +299,94 @@ def solve_encoding(
     )
 
 
+def solve_encoding_grouped(
+    design: Design,
+    targets: Targets,
+    lam_by_group: dict[object, float],
+    target_groups: np.ndarray,
+    n_folds: int = 5,
+    chunk_samples: int = 250 * 300,
+) -> EncodingResult:
+    """Fit the encoding model with a separate lambda per *target* group (e.g. band).
+
+    ``solve_encoding`` does one Cholesky solve shared by every target column,
+    so one lambda has to serve all of them at once. This does one solve **per
+    target group** instead, each with its own penalty -- e.g. gamma can be
+    smoothed harder than delta without delta paying for it, or vice versa.
+    Motivated by the median-lambda-selection collapse in ``select_lambda``
+    (see ``PLAN.md``/``index.qmd`` "Result 5"): a single pooled lambda can be
+    tuned well for the bulk of targets while badly under-regularising a
+    minority group, and this is the fitting-side fix that actually *consumes*
+    a per-group lambda (``select_lambda_robust(..., groups=...)`` only
+    *picks* one; nothing before this function could use it).
+
+    The shared streaming pass (``accumulate_folds``) runs once regardless of
+    group count -- only the ``(n_cols, n_cols)`` Cholesky factorisation
+    repeats per group, which is cheap.
+
+    Parameters
+    ----------
+    design : Design
+    targets : Targets
+    lam_by_group : dict
+        Group label -> lambda, e.g. from ``select_lambda_robust(design,
+        targets, lambdas, groups=target_groups)``.
+    target_groups : ndarray, shape (n_targets,)
+        Per-target group label matching ``lam_by_group``'s keys and
+        ``targets.target_meta``'s row order (e.g.
+        ``targets.target_meta["band"].to_numpy()``). Every target must
+        belong to a group present in ``lam_by_group``.
+    n_folds, chunk_samples : see :func:`solve_encoding`.
+
+    Returns
+    -------
+    EncodingResult
+        Same shape as :func:`solve_encoding`'s output. ``lam`` is
+        ``lam_by_group`` verbatim (a target-group dict) -- do not pass this
+        into :func:`build_penalty`/:func:`solve_encoding` directly, that
+        function's dict form means something different (per **regressor**
+        group, not per target group).
+    """
+    target_groups = np.asarray(target_groups)
+    if not set(np.unique(target_groups)) <= set(lam_by_group):
+        raise ValueError("every target group must have a lambda in lam_by_group")
+
+    accs = accumulate_folds(design, targets, n_folds, chunk_samples)
+    total = _sum(accs)
+
+    n_targets = targets.n_targets
+    W = np.empty((design.n_cols, n_targets))
+    a = np.empty(n_targets)
+    r2_full = np.empty(n_targets)
+    r2_cv = np.empty(n_targets)
+    dr2 = {group: np.empty(n_targets) for group in design.groups}
+
+    for g, lam in lam_by_group.items():
+        mask = target_groups == g
+        if not mask.any():
+            continue
+        P = build_penalty(design, lam)
+        total_g = _mask_targets(total, mask)
+        sxx_g, sxy_g, xbar_g, ybar_g = centred_cross(total_g)
+        w_g, a_g = _fit_and_intercept(sxx_g, sxy_g, xbar_g, ybar_g, P)
+        W[:, mask], a[mask] = w_g, a_g
+        r2_full[mask] = _r2(total_g, w_g, a_g)
+
+        accs_g = [_mask_targets(acc, mask) for acc in accs]
+        r2_cv[mask] = _cv_r2(accs_g, design, lam)
+        for group, idxs in design.groups.items():
+            cols = np.r_[tuple(np.arange(r * design.n_basis, (r + 1) * design.n_basis) for r in idxs)]
+            keep = np.setdiff1d(np.arange(design.n_cols), cols)
+            dr2[group][mask] = r2_cv[mask] - _cv_r2(accs_g, design, lam, keep=keep)
+
+    return EncodingResult(
+        pid=design.pid, kind=targets.kind, lam=lam_by_group, n_folds=n_folds,
+        W=W, intercept=a, kernels=_kernels(design, W), taus=design.taus,
+        r2_full=r2_full, r2_cv=r2_cv, dr2=dr2, target_meta=targets.target_meta,
+        base_names=design.base_names, groups=design.groups, lam_by_group=lam_by_group,
+    )
+
+
 def permutation_null_r2(
     design: Design,
     targets: Targets,
@@ -328,6 +434,57 @@ def permutation_null_r2(
     return null
 
 
+def permutation_null_r2_grouped(
+    design: Design,
+    targets: Targets,
+    lam_by_group: dict[object, float],
+    target_groups: np.ndarray,
+    n_perm: int = 30,
+    n_folds: int = 5,
+    seed: int = 0,
+    chunk_samples: int = 250 * 300,
+) -> np.ndarray:
+    """:func:`permutation_null_r2`, but scoring each target group with its own lambda.
+
+    The null must use the **same** per-group lambda as the real fit
+    (:func:`solve_encoding_grouped`) or the permutation p-value compares two
+    differently-regularised fits instead of isolating alignment. Only the
+    scoring step changes per group (via :func:`_mask_targets`); the shifted
+    streaming pass is shared across every group, same cost as
+    :func:`permutation_null_r2`.
+
+    Parameters
+    ----------
+    design, targets : Design, Targets
+    lam_by_group : dict
+        Group label -> lambda, as returned by ``select_lambda_robust(...,
+        groups=target_groups)`` and passed to :func:`solve_encoding_grouped`.
+    target_groups : ndarray, shape (n_targets,)
+        Per-target group label matching ``lam_by_group``'s keys.
+    n_perm, n_folds, seed, chunk_samples : see :func:`permutation_null_r2`.
+
+    Returns
+    -------
+    ndarray, shape (n_perm, n_targets)
+    """
+    rng = np.random.default_rng(seed)
+    n = design.n_samples
+    margin = int(round(10.0 * design.fs))
+    target_groups = np.asarray(target_groups)
+    null = np.zeros((n_perm, targets.n_targets))
+    for i in range(n_perm):
+        shift = int(rng.integers(margin, n - margin))
+        shifted = replace(design, base=np.roll(design.base, shift, axis=0))
+        accs = accumulate_folds(shifted, targets, n_folds, chunk_samples)
+        for g, lam in lam_by_group.items():
+            mask = target_groups == g
+            if not mask.any():
+                continue
+            accs_g = [_mask_targets(acc, mask) for acc in accs]
+            null[i, mask] = _cv_r2(accs_g, shifted, lam)
+    return null
+
+
 def select_lambda(
     design: Design,
     targets: Targets,
@@ -347,3 +504,107 @@ def select_lambda(
     accs = accumulate_folds(design, targets, n_folds, chunk_samples)
     curve = np.array([np.median(_cv_r2(accs, design, float(lam))) for lam in lambdas])
     return float(lambdas[int(np.argmax(curve))]), curve
+
+
+def select_lambda_robust(
+    design: Design,
+    targets: Targets,
+    lambdas: np.ndarray,
+    groups: np.ndarray | None = None,
+    n_folds: int = 5,
+    chunk_samples: int = 250 * 300,
+    floor: float = -0.3,
+    floor_quantile: float = 0.05,
+) -> tuple[float | dict[object, float], np.ndarray | dict[object, np.ndarray]]:
+    """Sweep ``lambda`` like :func:`select_lambda`, but pick a tail-safe winner.
+
+    ``select_lambda``'s median objective is *blind* to a collapsing subset of
+    targets: a lambda that lets a whole band overfit catastrophically can
+    still have the best median if the remaining targets improve, because the
+    median only looks at the middle of the distribution. That is exactly the
+    failure this project's compression comparison exposed (see
+    ``PLAN.md``/``index.qmd`` "Result 5") -- a single global lambda, chosen
+    this way, occasionally under-regularises an entire insertion.
+
+    Two changes, both applied to the *same* six-or-so candidate fits (no
+    extra streaming/accumulation cost over ``select_lambda``):
+
+    1. **Objective**: mean of per-target CV R² clipped to ``[-1, 1]`` instead
+       of the raw median. A meaningful fraction of targets collapsing pulls
+       a mean down sharply; the median can shrug off up to half the targets
+       failing without moving.
+    2. **Worst-case gate**: among candidate lambdas, only those whose
+       ``floor_quantile`` (default 5th percentile) of CV R² clears
+       ``floor`` are eligible to win. If none clear it, fall back to the
+       *largest* lambda in the grid rather than the objective-best one --
+       cheap insurance, since the R²(lambda) tuning curve is documented as
+       nearly flat at this basis resolution (see index.qmd "Diagnostics"),
+       so over-regularising here costs little while under-regularising can
+       cost everything.
+
+    Parameters
+    ----------
+    design : Design
+    targets : Targets
+    lambdas : ndarray
+        Candidate penalty strengths (should span comfortably above the
+        largest value ``select_lambda`` has ever picked, so the fallback has
+        somewhere safe to land).
+    groups : ndarray, shape (n_targets,), optional
+        Per-target group label (e.g. ``targets.target_meta["band"].to_numpy()``).
+        If given, a separate winning lambda is chosen **per group** from the
+        same shared candidate fits -- so one group collapsing cannot be
+        masked by another group's improvement, which a single pooled
+        objective (grouped or not) cannot rule out on its own. If ``None``
+        (default), one lambda is chosen for all targets together.
+    n_folds, chunk_samples : see :func:`select_lambda`.
+    floor : float, default -0.3
+        Worst-case-quantile CV R² a candidate lambda must clear per group.
+    floor_quantile : float, default 0.05
+        Quantile of the group's per-target CV R² checked against ``floor``.
+
+    Returns
+    -------
+    best : float or dict
+        Selected penalty strength (or one per group if ``groups`` given).
+    curve : ndarray or dict
+        Objective value per candidate lambda (or one curve per group), for
+        the diagnostic plot -- NOT the same scale as ``select_lambda``'s
+        median curve (this one is a clipped mean).
+    """
+    accs = accumulate_folds(design, targets, n_folds, chunk_samples)
+    all_r2 = np.stack([_cv_r2(accs, design, float(lam)) for lam in lambdas])  # (n_lambda, n_targets)
+    return _pick_lambda_from_curve(all_r2, lambdas, groups, floor, floor_quantile)
+
+
+def _pick_lambda_from_curve(
+    all_r2: np.ndarray, lambdas: np.ndarray, groups: np.ndarray | None, floor: float, floor_quantile: float,
+) -> tuple[float | dict[object, float], np.ndarray | dict[object, np.ndarray]]:
+    """Selection logic behind :func:`select_lambda_robust`, factored out for unit testing.
+
+    Parameters
+    ----------
+    all_r2 : ndarray, shape (n_lambda, n_targets)
+        Held-out CV R² for every candidate lambda (already computed).
+    lambdas, groups, floor, floor_quantile : see :func:`select_lambda_robust`.
+    """
+    lambdas = np.asarray(lambdas, dtype=float)
+    label = np.zeros(all_r2.shape[1], dtype=int) if groups is None else np.asarray(groups)
+    best: dict[object, float] = {}
+    curves: dict[object, np.ndarray] = {}
+    for g in np.unique(label) if groups is not None else [0]:
+        mask = label == g
+        sub = all_r2[:, mask]  # (n_lambda, n_group_targets)
+        objective = np.clip(sub, -1.0, 1.0).mean(axis=1)
+        safe = np.quantile(sub, floor_quantile, axis=1) >= floor
+        if safe.any():
+            candidates = np.flatnonzero(safe)
+            best_i = candidates[int(np.argmax(objective[candidates]))]
+        else:
+            best_i = len(lambdas) - 1  # no candidate clears the floor: fall back to the largest lambda
+        best[g] = float(lambdas[best_i])
+        curves[g] = objective
+
+    if groups is None:
+        return best[0], curves[0]
+    return best, curves
