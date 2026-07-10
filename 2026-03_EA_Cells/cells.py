@@ -15,6 +15,7 @@ from brainbox.io.one import SpikeSortingLoader
 
 from spikeinterface.core import NumpySorting
 from spikeinterface.postprocessing import compute_acgs_3d
+from slidingRP.metrics import slidingRP_all
 
 import ephysatlas.cells
 from ephysatlas.cells import compute_log_acg, compute_burstiness_and_memory
@@ -91,6 +92,52 @@ def compute_3d_acgs(spike_times, spike_clusters, cluster_ids, fs):
     return acgs_3d.astype(np.float32)
 
 
+def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur):
+    """
+    New sliding refractory-period QC metric (SteinmetzLab/slidingRefractory v2),
+    all clusters.
+
+    Columns are prefixed `slidingRP2_` so they cannot collide with the legacy
+    `slidingRP_viol` / `slidingRP_viol_forced` already in `df_clusters` (computed
+    by the previous, buggy implementation as part of spike sorting).
+
+    Parameters
+    ----------
+    spikes : dict
+        IBL spikes dict with 'times' (s) and 'clusters' arrays for the insertion.
+    df_clusters : pd.DataFrame
+        Indexed by cluster_id; used only to fix the row order/index of the result,
+        so clusters with no spikes at all still get a (NaN) row.
+    fs : float
+        AP-band sampling rate, in Hz.
+    rec_dur : float
+        Recording duration, in seconds (e.g. sr.ns / sr.fs).
+
+    Returns
+    -------
+    pd.DataFrame
+        Indexed like `df_clusters`, columns: slidingRP2_max_confidence,
+        slidingRP2_min_contamination, slidingRP2_rp_min_val,
+        slidingRP2_n_spikes_below2, slidingRP2_firing_rate, slidingRP2_viol,
+        slidingRP2_viol_forced.
+    """
+    rp = slidingRP_all(
+        spikes['times'], spikes['clusters'],
+        params={'recDur': rec_dur, 'sampleRate': fs, 'forcePass': True},
+        n_jobs=1,  # insertions are already parallelised across workers below
+    )
+    df_rp = pd.DataFrame({
+        'slidingRP2_max_confidence': rp['max_confidence'],
+        'slidingRP2_min_contamination': rp['min_contamination'],
+        'slidingRP2_rp_min_val': rp['rp_min_val'],
+        'slidingRP2_n_spikes_below2': rp['n_spikes_below2'],
+        'slidingRP2_firing_rate': rp['firing_rate'],
+        'slidingRP2_viol': rp['value'],
+        'slidingRP2_viol_forced': rp['value_forced'],
+    }, index=rp['cidx'])
+    return df_rp.reindex(df_clusters.index)
+
+
 def cell_features(pid, overwrite=False, compute_3dacg=False):
     """
     Extract per-cluster features for one insertion and save to a single HDF5 file.
@@ -117,7 +164,8 @@ def cell_features(pid, overwrite=False, compute_3dacg=False):
         df_clusters              cluster table after ssl merge
         avg_waveforms_index      pid / cluster_id / abs_channel for each flat trace row
         avg_waveform_features    waveform shape features
-        df_clusters_extended     burstiness and memory per cluster
+        df_clusters_extended     burstiness, memory, and slidingRP2_* QC columns
+                                  per cluster
     """
     outdir = OUTPUT_PATH.joinpath(pid)
     outfile = outdir.joinpath(f'{pid}.h5')
@@ -184,6 +232,10 @@ def cell_features(pid, overwrite=False, compute_3dacg=False):
         dtype=np.float32,
     )
     df_clusters_extended = pd.DataFrame(bm, index=df_clusters.index, columns=['burstiness', 'memory'])
+
+    # Sliding RP v2 QC metric (all clusters)
+    df_rp2 = compute_sliding_rp_v2(spikes, df_clusters, sr.fs, rec_dur=sr.ns / sr.fs)
+    df_clusters_extended = df_clusters_extended.join(df_rp2)
 
     # Write to a tmp file first; rename to final path only on full success.
     # This ensures a killed/crashed job never leaves a partial file that the
@@ -290,30 +342,33 @@ def stpc_wrapper(pid):
         traceback_path.write_text(traceback.format_exc())
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--step', choices=['cells', 'stlfp', 'stpc'], default='cells',
-                    help='which per-insertion step to run (see README)')
-parser.add_argument('--overwrite', action='store_true', help='[cells step] recompute even if HDF5 already exists')
-parser.add_argument('--acg3d', action='store_true', help='[cells step] also compute 3D ACGs for all clusters')
-args = parser.parse_args()
-
-if args.step == 'cells':
-    jobs = [
-        joblib.delayed(cell_features_wrapper)(pid=pid, overwrite=args.overwrite, compute_3dacg=args.acg3d)
-        for pid in pids if pid not in EXCLUDES
-    ]
-elif args.step == 'stlfp':
-    jobs = [joblib.delayed(stlfp_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
-else:
-    jobs = [joblib.delayed(stpc_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
-
-
 def worker_init():
     delay = (os.getpid() % 100)  # 0..99 s stagger to avoid thundering-herd on ONE auth
     time.sleep(delay)
 
-joblib.Parallel(
-    n_jobs=48,
-    backend="loky",
-    initializer=worker_init,
-)(jobs)
+
+if __name__ == '__main__':
+    # Guarded so cells.py can be imported (e.g. for a single-PID smoke test) without
+    # triggering the full batch dispatch below.
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--step', choices=['cells', 'stlfp', 'stpc'], default='cells',
+                        help='which per-insertion step to run (see README)')
+    parser.add_argument('--overwrite', action='store_true', help='[cells step] recompute even if HDF5 already exists')
+    parser.add_argument('--acg3d', action='store_true', help='[cells step] also compute 3D ACGs for all clusters')
+    args = parser.parse_args()
+
+    if args.step == 'cells':
+        jobs = [
+            joblib.delayed(cell_features_wrapper)(pid=pid, overwrite=args.overwrite, compute_3dacg=args.acg3d)
+            for pid in pids if pid not in EXCLUDES
+        ]
+    elif args.step == 'stlfp':
+        jobs = [joblib.delayed(stlfp_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
+    else:
+        jobs = [joblib.delayed(stpc_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
+
+    joblib.Parallel(
+        n_jobs=48,
+        backend="loky",
+        initializer=worker_init,
+    )(jobs)

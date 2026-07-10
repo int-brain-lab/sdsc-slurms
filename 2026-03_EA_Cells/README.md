@@ -106,7 +106,7 @@ DataFrames (pandas `HDFStore`, `format='fixed'`), all indexed by `cluster_id` un
 | `df_clusters`            | standard `SpikeSortingLoader.merge_clusters()` output (`label`, `firing_rate`, `amp_median`, `contamination`, anatomy, etc.) + `pid` | One row per cluster |
 | `avg_waveforms_index`    | `pid`, `cluster_id`, `abs_channel` | Maps each row of `avg_waveforms` to a (cluster, channel); not indexed by cluster_id |
 | `avg_waveform_features`  | `peak_time_idx`, `peak_val`, `trough_time_idx`, `trough_val`, `tip_time_idx`, `tip_val`, `half_peak_*`, `recovery_time_idx`, `recovery_val`, `depolarisation_slope`, `repolarisation_slope`, `recovery_slope`, `peak_channel`, `axial_um`, `lateral_um` | From `ibldsp.waveforms.compute_spike_features()` on `avg_waveform_peak_channel` |
-| `df_clusters_extended`   | `burstiness`, `memory` | Per `ephysatlas.cells.compute_burstiness_and_memory()`; NaN if a cluster has < 6 spikes |
+| `df_clusters_extended`   | `burstiness`, `memory`, `slidingRP2_max_confidence`, `slidingRP2_min_contamination`, `slidingRP2_rp_min_val`, `slidingRP2_n_spikes_below2`, `slidingRP2_firing_rate`, `slidingRP2_viol`, `slidingRP2_viol_forced` | Burstiness/memory per `ephysatlas.cells.compute_burstiness_and_memory()` (NaN if < 6 spikes); `slidingRP2_*` per `compute_sliding_rp_v2()` (SteinmetzLab/slidingRefractory v2) — prefixed to avoid colliding with the legacy `slidingRP_viol`/`slidingRP_viol_forced` already in `df_clusters` |
 
 Attrs on the root group: `pid` (str), `n_clusters`, `n_good`, `nc` (all int).
 
