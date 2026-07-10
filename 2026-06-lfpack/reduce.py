@@ -44,7 +44,7 @@ import ephysatlas.data
 from lfpack import merge_h5
 
 # ── paths ──────────────────────────────────────────────────────────────────────
-OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/ea/cells')
+OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/ea/denoised_lfp')
 PROJECT_ROOT = Path.home().joinpath('data', 'ephys-atlas', 'projects')
 PROJECT      = 'ibl_neuropixel_brainwide_01'
 SENTINEL     = 'lf_resampled_car_cadzow.npy'

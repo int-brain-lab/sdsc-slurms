@@ -14,7 +14,7 @@ Usage
 import argparse
 from pathlib import Path
 
-OUTPUT_ROOT = Path('/mnt/home/owinter/ceph/ea/cells')
+OUTPUT_ROOT = Path('/mnt/home/owinter/ceph/ea/denoised_lfp')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--delete', action='store_true', help='Actually delete (default: dry run)')

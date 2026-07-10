@@ -19,7 +19,7 @@ PARAMS = {
 }
 CADZOW_KWARGS = dict(rank=5, niter=1, fmax=None, nswx=64, gap_threshold=2.0, ppca_k=2.0)
 
-OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/ea/cells')
+OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/ea/denoised_lfp')
 
 out_dir = OUTPUT_ROOT.joinpath(pid)
 out_dir.mkdir(parents=True, exist_ok=True)

@@ -59,7 +59,7 @@ import targets as targets_mod
 # (flat, one .h5 per tier — see --download).
 LFP_DATA_ROOT = Path("/mnt/home/owinter/ceph/lfp-encoders")
 # Per-PID Cadzow checkpoints (the uncompressed reference) from the 2026-06-lfpack job.
-LFP_CELLS_ROOT = Path("/mnt/home/owinter/ceph/ea/cells")
+LFP_CELLS_ROOT = Path("/mnt/home/owinter/ceph/ea/denoised_lfp")
 OUTPUT_ROOT = Path("/mnt/home/owinter/ceph/lfp-encoders/results_bwm")
 
 UNCOMPRESSED = "uncompressed"

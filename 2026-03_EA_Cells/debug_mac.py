@@ -128,7 +128,7 @@ from one.api import ONE
 from brainbox.io.one import SpikeSortingLoader
 
 one = ONE()
-WORKDIR = Path('/mnt/home/owinter/ceph/ea/cells')
+WORKDIR = Path('/mnt/home/owinter/ceph/ea/denoised_lfp')
 WORKDIR = Path.home().joinpath('scratch/lfp')
 
 

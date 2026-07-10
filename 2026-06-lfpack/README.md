@@ -6,7 +6,7 @@ Compresses the IBL LFP recordings into HDF5 archives using SVD + wavelet-packet 
 ## Output layout
 
 ```
-/mnt/home/owinter/ceph/ea/cells/
+/mnt/home/owinter/ceph/ea/denoised_lfp/
   <pid>/
     lf_compressed.h5              default   (ε=150, α=28)
     lf_compressed_aggressive.h5   aggressive (ε=450, α=96)
@@ -26,13 +26,13 @@ cd /mnt/home/owinter/Documents/sdsc-slurms/2026-06-lfpack && sbatch compress.sba
 cd /mnt/home/owinter/Documents/sdsc-slurms/2026-06-lfpack && sbatch compress.sbatch --overwrite
 
 # Check progress — PIDs fully done (both H5 files present)
-find /mnt/home/owinter/ceph/ea/cells -maxdepth 2 -name 'lf_compressed_aggressive.h5' | wc -l
+find /mnt/home/owinter/ceph/ea/denoised_lfp -maxdepth 2 -name 'lf_compressed_aggressive.h5' | wc -l
 
 # Check progress — default pass only
-find /mnt/home/owinter/ceph/ea/cells -maxdepth 2 -name 'lf_compressed.h5' | wc -l
+find /mnt/home/owinter/ceph/ea/denoised_lfp -maxdepth 2 -name 'lf_compressed.h5' | wc -l
 
 # Check errors
-ls /mnt/home/owinter/ceph/ea/cells/*/*.error 2>/dev/null
+ls /mnt/home/owinter/ceph/ea/denoised_lfp/*/*.error 2>/dev/null
 
 # Live job stats (replace JOBID)
 sstat -j <JOBID>.batch --format=JobID,AveCPU,MaxRSS,MaxVMSize,NTasks
@@ -95,5 +95,5 @@ The H5 existence check (both files present → skip) makes reruns and overlappin
 ## Sync results to local / Elbocal
 
 ```bash
-rsync -av --progress -e ssh popeye:/mnt/home/owinter/ceph/ea/cells /mnt/s0/Data/lfpack
+rsync -av --progress -e ssh --include='*/' --include='lf_compressed*.h5' --exclude='*' popeye:/mnt/home/owinter/ceph/ea/denoised_lfp /Users/olivier/Documents/datadisk/lfp-processing/lfpack 
 ```

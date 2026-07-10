@@ -5,7 +5,6 @@ from pathlib import Path
 import joblib
 import traceback
 import time
-import ibldsp.voltage
 import ibldsp.waveforms
 
 import h5py
@@ -13,6 +12,9 @@ import numpy as np
 import pandas as pd
 from deploy.iblsdsc import OneSdsc as ONE
 from brainbox.io.one import SpikeSortingLoader
+
+from spikeinterface.core import NumpySorting
+from spikeinterface.postprocessing import compute_acgs_3d
 
 import ephysatlas.cells
 from ephysatlas.cells import compute_log_acg, compute_burstiness_and_memory
@@ -29,8 +31,8 @@ EXCLUDES = [
 ]
 
 TABLES_DIR = Path('/mnt/home/owinter/Documents/cache_tables/one_cache-ibl_neuropixel_brainwide_01')
-OUTPUT_PATH = Path(f'/mnt/home/owinter/ceph/ea/cells')
-Q = 10
+OUTPUT_PATH = Path('/mnt/home/owinter/ceph/ea/cells')          # cell features: h5, stlfp.npy, stpc.npy
+LFP_PATH = Path('/mnt/home/owinter/ceph/ea/denoised_lfp')       # LFP preprocessing outputs (lfpack)
 
 # ── ACG parameters ────────────────────────────────────────────────────────────
 BIN_SIZE = 0.2e-3   # s base resolution
@@ -38,13 +40,58 @@ WIN_SIZE = 2.0      # s one-sided window
 N_LOG_BINS = 128
 LOG_TRIM = 1e-3     # s start of log axis (refractory period cutoff)
 
+# ── 3D ACG parameters (firing-rate decile x time-lag) ─────────────────────────
+# Matches Han Yu's NEMO/ICLR pipeline (compute_3dACG_IBL.py): cbin=1 ms, cwin=2000 ms,
+# 10 firing-rate quantiles, 250 ms smoothing -> (n_clusters, 10, 201) per insertion.
+ACG3D_WINDOW_MS = 2000.0
+ACG3D_BIN_MS = 1.0
+ACG3D_NUM_FIRING_RATE_QUANTILES = 10
+ACG3D_SMOOTHING_MS = 250.0
+
 file_insertions = TABLES_DIR.parent.joinpath('df_probe_details_ibl_neuropixel_brainwide_01.pqt')
 
 df_insertions = pd.read_parquet(file_insertions)
 pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
 
 
-def cell_features(pid, overwrite=False):
+def compute_3d_acgs(spike_times, spike_clusters, cluster_ids, fs):
+    """
+    Firing-rate-decile x time-lag 3D autocorrelogram, one per cluster.
+
+    Parameters
+    ----------
+    spike_times : np.ndarray
+        Spike times for the whole insertion, in seconds.
+    spike_clusters : np.ndarray
+        Cluster id of each spike, same length as `spike_times`.
+    cluster_ids : np.ndarray
+        Clusters to compute the ACG for, defines the output row order.
+    fs : float
+        Sampling frequency of `spike_times`, in Hz.
+
+    Returns
+    -------
+    np.ndarray
+        (len(cluster_ids), ACG3D_NUM_FIRING_RATE_QUANTILES, 201) float32 array.
+    """
+    sorting = NumpySorting.from_samples_and_labels(
+        samples_list=np.round(spike_times * fs).astype(np.int64),
+        labels_list=spike_clusters,
+        sampling_frequency=fs,
+        unit_ids=cluster_ids,
+    )
+    acgs_3d, _, _ = compute_acgs_3d(
+        sorting,
+        window_ms=ACG3D_WINDOW_MS,
+        bin_ms=ACG3D_BIN_MS,
+        num_firing_rate_quantiles=ACG3D_NUM_FIRING_RATE_QUANTILES,
+        smoothing_factor=ACG3D_SMOOTHING_MS,
+        n_jobs=1,  # insertions are already parallelised across workers below
+    )
+    return acgs_3d.astype(np.float32)
+
+
+def cell_features(pid, overwrite=False, compute_3dacg=False):
     """
     Extract per-cluster features for one insertion and save to a single HDF5 file.
 
@@ -54,6 +101,10 @@ def cell_features(pid, overwrite=False):
         Probe insertion UUID.
     overwrite : bool
         If True, delete any existing output file and recompute.
+    compute_3dacg : bool
+        If True, also compute the 3D (firing-rate decile x time-lag) ACG for all
+        clusters and write it as `acgs_3d`. Off by default: much more expensive
+        than `acgs_log_bins`.
 
     Outputs written to OUTPUT_PATH / pid / {pid}.h5:
       Arrays (h5py, gzip-compressed where large):
@@ -61,6 +112,7 @@ def cell_features(pid, overwrite=False):
         avg_waveform_peak_channel (n_clusters, ns)
         acgs_log_bins            (n_clusters, N_LOG_BINS)
         acgs_log_times           (N_LOG_BINS,)
+        acgs_3d                  (n_clusters, 10, 201)      only if compute_3dacg=True
       DataFrames (pandas HDFStore, appended):
         df_clusters              cluster table after ssl merge
         avg_waveforms_index      pid / cluster_id / abs_channel for each flat trace row
@@ -121,6 +173,10 @@ def cell_features(pid, overwrite=False):
         bin_size=BIN_SIZE, win_size=WIN_SIZE, n_log_bins=N_LOG_BINS, log_trim=LOG_TRIM,
     )
 
+    # 3D ACGs (all clusters, opt-in: expensive)
+    if compute_3dacg:
+        acgs_3d = compute_3d_acgs(spikes['times'], spikes['clusters'], df_clusters.index.values, sr.fs)
+
     # Burstiness and memory (all clusters)
     bm = np.array(
         [compute_burstiness_and_memory(spikes['times'][spikes['clusters'] == cid])
@@ -139,6 +195,9 @@ def cell_features(pid, overwrite=False):
         h5.create_dataset('acgs_log_bins', data=acgs_log_bins.astype(np.float32),
                           compression='gzip', compression_opts=4)
         h5.create_dataset('acgs_log_times', data=acgs_log_times.astype(np.float64))
+        if compute_3dacg:
+            h5.create_dataset('acgs_3d', data=acgs_3d,
+                              compression='gzip', compression_opts=4)
         h5.attrs['pid'] = pid
         h5.attrs['n_clusters'] = n_clusters
         h5.attrs['n_good'] = n_good
@@ -150,25 +209,22 @@ def cell_features(pid, overwrite=False):
     outfile_tmp.rename(outfile)
 
 
-def resample_lfp(pid):
-    file_rsamp_lfp = OUTPUT_PATH.joinpath(pid, 'lf_resampled.npy')
-    if not file_rsamp_lfp.exists():
-        one = ONE()
-        ssl = SpikeSortingLoader(one=one, pid=pid)
-        sr = ssl.raw_electrophysiology(band='lf', stream=False)
-        channel_labels = ibldsp.voltage.detect_bad_channels_cbin(sr, display=False)
-        ibldsp.voltage.resample_denoise_lfp_cbin(
-            lf_file=sr, output=file_rsamp_lfp, channel_labels=channel_labels, q=Q)
-
-
 def stlfp(pid):
+    """
+    Spike-triggered LFP for one insertion.
+
+    Reads `lf_resampled_car_cadzow.npy` from LFP_PATH — the Cadzow-denoised, resampled
+    LFP checkpoint produced by the separate lfpack job (../2026-06-lfpack/compress.py),
+    the source of truth for resampled LFP. Requires that job to have run first.
+    """
     one = ONE()
     ssl = SpikeSortingLoader(one=one, pid=pid)
     spikes, clusters, channels = ssl.load_spike_sorting(dataset_types=['spikes.samples'])
     df_clusters = pd.DataFrame(ssl.merge_clusters(spikes, clusters, channels))
 
-    file_rsamp_lfp = OUTPUT_PATH.joinpath(pid, 'lf_resampled.npy')
+    file_rsamp_lfp = LFP_PATH.joinpath(pid, 'lf_resampled_car_cadzow.npy')
     file_stlfp = OUTPUT_PATH.joinpath(pid, 'stlfp.npy')
+    file_stlfp.parent.mkdir(parents=True, exist_ok=True)
 
     ephysatlas.cells.spike_triggered_lfp(
         file_rsamp_lfp,
@@ -182,48 +238,74 @@ def stlfp(pid):
 
 
 def stpc(pid):
+    """
+    Spike-triggered population coupling for one insertion.
+
+    Writes only `stpc.npy` (good clusters), atomically: computed into a `.tmp` file
+    via `file_stpc`, then renamed into place, so a killed job never leaves a partial
+    `stpc.npy` that the skip-guard below would mistake for a completed run.
+    """
     output_path = OUTPUT_PATH.joinpath(pid)
-    if output_path.joinpath('stpc.png').exists():
+    outfile = output_path.joinpath('stpc.npy')
+    if outfile.exists():
         return
     output_path.mkdir(parents=True, exist_ok=True)
+    outfile_tmp = output_path.joinpath('stpc.npy.tmp')
+    outfile_tmp.unlink(missing_ok=True)  # drop any partial file left by a previous crash
+
     one = ONE()
     ssl = SpikeSortingLoader(one=one, pid=pid)
     spikes, clusters, channels = ssl.load_spike_sorting()
     df_clusters = pd.DataFrame(ssl.merge_clusters(spikes, clusters, channels))
 
-    df_clusters, stpc, tscale, coupling_strength, taper, coupling_delay, firing_rates = (
-        ephysatlas.cells.spike_triggered_population_coupling(
-            spikes,
-            df_clusters,
-            file_stpc=output_path.joinpath('stpc.npy'),
-        )
-    )
-    df_clusters.to_parquet(output_path.joinpath('clusters.pqt'))
-    ephysatlas.cells.display_stpc(
+    ephysatlas.cells.spike_triggered_population_coupling(
+        spikes,
         df_clusters,
-        stpc,
-        tscale,
-        coupling_strength,
-        coupling_delay,
-        firing_rates,
-        save_file=output_path.joinpath('stpc.png'),
-        label=pid,
+        file_stpc=outfile_tmp,
     )
+    outfile_tmp.rename(outfile)
 
 
-def cell_features_wrapper(pid, overwrite=False):
+def cell_features_wrapper(pid, overwrite=False, compute_3dacg=False):
     try:
-        cell_features(pid, overwrite=overwrite)
+        cell_features(pid, overwrite=overwrite, compute_3dacg=compute_3dacg)
     except Exception:
         traceback_path = OUTPUT_PATH.joinpath(f'{pid}_cell_features.error')
         traceback_path.write_text(traceback.format_exc())
 
 
+def stlfp_wrapper(pid):
+    try:
+        stlfp(pid)
+    except Exception:
+        traceback_path = OUTPUT_PATH.joinpath(f'{pid}_stlfp.error')
+        traceback_path.write_text(traceback.format_exc())
+
+
+def stpc_wrapper(pid):
+    try:
+        stpc(pid)
+    except Exception:
+        traceback_path = OUTPUT_PATH.joinpath(f'{pid}_stpc.error')
+        traceback_path.write_text(traceback.format_exc())
+
+
 parser = argparse.ArgumentParser()
-parser.add_argument('--overwrite', action='store_true', help='recompute even if HDF5 already exists')
+parser.add_argument('--step', choices=['cells', 'stlfp', 'stpc'], default='cells',
+                    help='which per-insertion step to run (see README)')
+parser.add_argument('--overwrite', action='store_true', help='[cells step] recompute even if HDF5 already exists')
+parser.add_argument('--acg3d', action='store_true', help='[cells step] also compute 3D ACGs for all clusters')
 args = parser.parse_args()
 
-jobs = [joblib.delayed(cell_features_wrapper)(pid=pid, overwrite=args.overwrite) for pid in pids if pid not in EXCLUDES]
+if args.step == 'cells':
+    jobs = [
+        joblib.delayed(cell_features_wrapper)(pid=pid, overwrite=args.overwrite, compute_3dacg=args.acg3d)
+        for pid in pids if pid not in EXCLUDES
+    ]
+elif args.step == 'stlfp':
+    jobs = [joblib.delayed(stlfp_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
+else:
+    jobs = [joblib.delayed(stpc_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
 
 
 def worker_init():

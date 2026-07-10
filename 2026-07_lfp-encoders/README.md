@@ -66,14 +66,42 @@ behaviour exactly.
 sbatch encode.sbatch --lfp-source default --limit 4 --workers 4 --n-perm 2 --stagger 2
 # full run per source (single node as configured; widen --array in the sbatch to stripe across nodes)
 # --outdir: point at a NEW directory, don't overwrite the archived results_bwm_cluster run
-sbatch encode.sbatch --lfp-source default --outdir ~/ceph/lfp-encoders/results_bwm_perband
-sbatch encode.sbatch --lfp-source aggressive --outdir ~/ceph/lfp-encoders/results_bwm_perband
-sbatch encode.sbatch --lfp-source uncompressed --outdir ~/ceph/lfp-encoders/results_bwm_perband
+sbatch encode.sbatch --lfp-source default --outdir ~/ceph/lfp-encoders/results_bwm
+sbatch encode.sbatch --lfp-source aggressive --outdir ~/ceph/lfp-encoders/results_bwm
+sbatch encode.sbatch --lfp-source uncompressed --outdir ~/ceph/lfp-encoders/results_bwm
 ```
 Resumable: PIDs with **both** `<pid>_band.parquet` and `<pid>_raw.parquet` under the
 source's outdir are skipped (a PID interrupted mid-fit re-runs).
 (The fast smoke's `--n-perm 2` scores are throwaway — overwrite them with the full run, or
 point `--outdir` elsewhere for the smoke.)
+
+## Check progress
+
+```bash
+squeue -u $USER   # empty = nothing still queued/running
+for s in default aggressive uncompressed; do
+  b=$(ls ~/ceph/lfp-encoders/results_bwm/$s/scores/*_band.parquet 2>/dev/null | wc -l)
+  r=$(ls ~/ceph/lfp-encoders/results_bwm/$s/scores/*_raw.parquet 2>/dev/null | wc -l)
+  echo "$s: band=$b raw=$r"
+done
+```
+Expected output: 
+```shell
+default: band=699 raw=699
+aggressive: band=699 raw=699
+uncompressed: band=699 raw=699
+```
+
+## Archive for transfer
+
+```bash
+cd ~/ceph/lfp-encoders
+tar czf results_bwm_$(date +%F).tar.gz results_bwm/
+```
+Then from the laptop:
+```bash
+rsync --progress -av -e ssh popeye:~/ceph/lfp-encoders/results_bwm_2026-07-07.tar.gz ./
+```
 
 ## Lambda fitting
 `select_lambda` (pooled) picks one lambda per `(PID, kind)` by maximising the *median*
