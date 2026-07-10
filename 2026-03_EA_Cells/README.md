@@ -15,16 +15,18 @@ Code directory on Popeye:
 
 ## Compute steps
 
-`cells.py` runs one step at a time across all PIDs via `--step {cells,stlfp,stpc}`
-(default `cells`), parallelised with joblib (48 workers). Each step is idempotent —
-failed PIDs write a `{pid}_{step}.error` traceback file instead of raising, so a job
-can safely be re-submitted to pick up only what's missing.
+`cells.py` runs one step at a time across all PIDs via
+`--step {cells,stlfp,stpc,patch_slidingrp}` (default `cells`), parallelised with joblib
+(48 workers). Each step is idempotent — failed PIDs write a `{pid}_{step}.error`
+traceback file instead of raising, so a job can safely be re-submitted to pick up only
+what's missing.
 
-| Step    | Function        | Writes                        | Depends on |
-|---------|-----------------|--------------------------------|------------|
-| `cells` | `cell_features` | `{pid}.h5`                    | spike sorting only |
-| `stlfp` | `stlfp`         | `stlfp.npy`                    | `denoised_lfp/<pid>/lf_resampled_car_cadzow.npy` (lfpack) |
-| `stpc`  | `stpc`          | `stpc.npy`                    | spike sorting only |
+| Step              | Function                | Writes                        | Depends on |
+|-------------------|--------------------------|--------------------------------|------------|
+| `cells`           | `cell_features`          | `{pid}.h5`                    | spike sorting only |
+| `stlfp`           | `stlfp`                  | `stlfp.npy`                    | `denoised_lfp/<pid>/lf_resampled_car_cadzow.npy` (lfpack) |
+| `stpc`            | `stpc`                   | `stpc.npy`                    | spike sorting only |
+| `patch_slidingrp` | `patch_sliding_rp_v2`    | `{pid}.h5` (patched in place)  | an existing `{pid}.h5` (from `cells`) |
 
 `{pid}.h5` holds waveforms, log-binned ACGs, burstiness/memory, and (if `--acg3d`) the 3D ACGs — see [`{pid}.h5` format](#pidh5-format) below for the full layout.
 
@@ -34,13 +36,17 @@ the lfpack compression job (`../2026-06-lfpack`) first.
 
 ### `cells` step — per-cluster features (waveforms, log-ACG, 3D ACG)
 ```bash
-sbatch cells.sbatch                        # skip PIDs that already have {pid}.h5
-sbatch cells.sbatch --overwrite            # recompute every PID from scratch
-sbatch cells.sbatch --acg3d                # also compute the 3D (firing-rate x time-lag) ACG, all clusters
-sbatch cells.sbatch --overwrite --acg3d    # recompute everything, including 3D ACGs
+sbatch cells.sbatch                         # skip PIDs that already have {pid}.h5
+sbatch cells.sbatch --overwrite             # recompute every PID from scratch
+sbatch cells.sbatch --step patch_slidingrp  # re-apply the sliding RP v2 QC metric only
+sbatch cells.sbatch --acg3d                 # also compute the 3D (firing-rate x time-lag) ACG, all clusters
+sbatch cells.sbatch --overwrite --acg3d     # recompute everything, including 3D ACGs
+# to check progress
+find /mnt/home/owinter/ceph/ea/cells -maxdepth 2 -name '*.h5' | wc -l
 ```
 `--acg3d` is opt-in because it's substantially more expensive than the log-binned
 ACG (`acgs_log_bins`) — it's computed over all ~925k clusters, not just good units.
+
 
 ### `stlfp` step — spike-triggered LFP
 ```bash

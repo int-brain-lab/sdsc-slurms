@@ -49,6 +49,12 @@ ACG3D_BIN_MS = 1.0
 ACG3D_NUM_FIRING_RATE_QUANTILES = 10
 ACG3D_SMOOTHING_MS = 250.0
 
+# ── Sliding RP v2 parameters ───────────────────────────────────────────────────
+# Forwarded as-is to compute_sliding_rp_v2 / patch_sliding_rp_v2 (cells and
+# patch_slidingrp steps). Edit and re-run --step patch_slidingrp to re-tune
+# without recomputing waveforms/ACGs.
+SLIDING_RP_PARAMS = dict(conf_thresh=90, cont_thresh=10, rp_reject=0.0005, force_pass=True)
+
 file_insertions = TABLES_DIR.parent.joinpath('df_probe_details_ibl_neuropixel_brainwide_01.pqt')
 
 df_insertions = pd.read_parquet(file_insertions)
@@ -92,7 +98,8 @@ def compute_3d_acgs(spike_times, spike_clusters, cluster_ids, fs):
     return acgs_3d.astype(np.float32)
 
 
-def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur):
+def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur, conf_thresh=90,
+                          cont_thresh=10, rp_reject=0.0005, force_pass=True):
     """
     New sliding refractory-period QC metric (SteinmetzLab/slidingRefractory v2),
     all clusters.
@@ -112,6 +119,11 @@ def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur):
         AP-band sampling rate, in Hz.
     rec_dur : float
         Recording duration, in seconds (e.g. sr.ns / sr.fs).
+    conf_thresh, cont_thresh, rp_reject, force_pass
+        Forwarded to `slidingRP.metrics.slidingRP_all` — see its docstring.
+        Change these here (or at the call site) to re-tune the metric; use
+        `patch_sliding_rp_v2()` to re-apply to already-computed {pid}.h5 files
+        without recomputing waveforms/ACGs.
 
     Returns
     -------
@@ -123,7 +135,8 @@ def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur):
     """
     rp = slidingRP_all(
         spikes['times'], spikes['clusters'],
-        params={'recDur': rec_dur, 'sampleRate': fs, 'forcePass': True},
+        params={'recDur': rec_dur, 'sampleRate': fs, 'forcePass': force_pass},
+        conf_thresh=conf_thresh, cont_thresh=cont_thresh, rp_reject=rp_reject,
         n_jobs=1,  # insertions are already parallelised across workers below
     )
     df_rp = pd.DataFrame({
@@ -138,7 +151,56 @@ def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur):
     return df_rp.reindex(df_clusters.index)
 
 
-def cell_features(pid, overwrite=False, compute_3dacg=False):
+def patch_sliding_rp_v2(pid, **rp_kwargs):
+    """
+    Recompute only the slidingRP2_* QC columns for one insertion and patch them
+    into the existing {pid}.h5 — without recomputing waveforms or ACGs.
+
+    Use this after changing slidingRP parameters (pass them as `rp_kwargs`, e.g.
+    `conf_thresh=95`) or fixing a bug in `compute_sliding_rp_v2`, instead of
+    re-running the whole `cells` step. Still needs to reload `spikes` (not cached
+    in the h5) and `sr.fs`/`sr.ns` (cheap metadata), but skips everything else.
+
+    Every other array/dataframe is copied across unchanged via h5py's raw
+    `copy()` (preserves compression/attrs exactly) into a fresh tmp file, which
+    is then renamed over the original — same atomic discipline as
+    cell_features(), this time protecting the expensive, already-computed parts
+    of the file from a crash mid-patch.
+
+    Parameters
+    ----------
+    pid : str
+        Probe insertion UUID; {pid}.h5 must already exist.
+    **rp_kwargs
+        Forwarded to `compute_sliding_rp_v2` (conf_thresh, cont_thresh,
+        rp_reject, force_pass).
+    """
+    outfile = OUTPUT_PATH.joinpath(pid, f'{pid}.h5')
+    outfile_tmp = outfile.with_suffix('.h5.tmp')
+
+    one = ONE()
+    ssl = SpikeSortingLoader(one=one, pid=pid)
+    spikes, _, _ = ssl.load_spike_sorting(dataset_types=['spikes.times', 'spikes.clusters'])
+    sr = ssl.raw_electrophysiology(band='ap', stream=True)
+
+    df_clusters = pd.read_hdf(outfile, key='df_clusters')
+    df_clusters_extended = pd.read_hdf(outfile, key='df_clusters_extended')
+    df_clusters_extended = df_clusters_extended.drop(
+        columns=[c for c in df_clusters_extended.columns if c.startswith('slidingRP2_')]
+    )
+    df_rp2 = compute_sliding_rp_v2(spikes, df_clusters, sr.fs, rec_dur=sr.ns / sr.fs, **rp_kwargs)
+    df_clusters_extended = df_clusters_extended.join(df_rp2)
+
+    with h5py.File(outfile, 'r') as h5_src, h5py.File(outfile_tmp, 'w') as h5_dst:
+        for key in h5_src.keys():
+            if key != 'df_clusters_extended':
+                h5_src.copy(key, h5_dst)
+        h5_dst.attrs.update(h5_src.attrs)
+    df_clusters_extended.to_hdf(outfile_tmp, key='df_clusters_extended', mode='a', format='fixed')
+    outfile_tmp.rename(outfile)
+
+
+def cell_features(pid, overwrite=False, compute_3dacg=False, rp_kwargs=None):
     """
     Extract per-cluster features for one insertion and save to a single HDF5 file.
 
@@ -152,6 +214,9 @@ def cell_features(pid, overwrite=False, compute_3dacg=False):
         If True, also compute the 3D (firing-rate decile x time-lag) ACG for all
         clusters and write it as `acgs_3d`. Off by default: much more expensive
         than `acgs_log_bins`.
+    rp_kwargs : dict, optional
+        Forwarded to `compute_sliding_rp_v2` (conf_thresh, cont_thresh, rp_reject,
+        force_pass). Defaults there apply if not given.
 
     Outputs written to OUTPUT_PATH / pid / {pid}.h5:
       Arrays (h5py, gzip-compressed where large):
@@ -234,7 +299,7 @@ def cell_features(pid, overwrite=False, compute_3dacg=False):
     df_clusters_extended = pd.DataFrame(bm, index=df_clusters.index, columns=['burstiness', 'memory'])
 
     # Sliding RP v2 QC metric (all clusters)
-    df_rp2 = compute_sliding_rp_v2(spikes, df_clusters, sr.fs, rec_dur=sr.ns / sr.fs)
+    df_rp2 = compute_sliding_rp_v2(spikes, df_clusters, sr.fs, rec_dur=sr.ns / sr.fs, **(rp_kwargs or {}))
     df_clusters_extended = df_clusters_extended.join(df_rp2)
 
     # Write to a tmp file first; rename to final path only on full success.
@@ -318,9 +383,9 @@ def stpc(pid):
     outfile_tmp.rename(outfile)
 
 
-def cell_features_wrapper(pid, overwrite=False, compute_3dacg=False):
+def cell_features_wrapper(pid, overwrite=False, compute_3dacg=False, rp_kwargs=None):
     try:
-        cell_features(pid, overwrite=overwrite, compute_3dacg=compute_3dacg)
+        cell_features(pid, overwrite=overwrite, compute_3dacg=compute_3dacg, rp_kwargs=rp_kwargs)
     except Exception:
         traceback_path = OUTPUT_PATH.joinpath(f'{pid}_cell_features.error')
         traceback_path.write_text(traceback.format_exc())
@@ -342,6 +407,14 @@ def stpc_wrapper(pid):
         traceback_path.write_text(traceback.format_exc())
 
 
+def patch_sliding_rp_v2_wrapper(pid, rp_kwargs=None):
+    try:
+        patch_sliding_rp_v2(pid, **(rp_kwargs or {}))
+    except Exception:
+        traceback_path = OUTPUT_PATH.joinpath(f'{pid}_patch_slidingrp.error')
+        traceback_path.write_text(traceback.format_exc())
+
+
 def worker_init():
     delay = (os.getpid() % 100)  # 0..99 s stagger to avoid thundering-herd on ONE auth
     time.sleep(delay)
@@ -351,7 +424,7 @@ if __name__ == '__main__':
     # Guarded so cells.py can be imported (e.g. for a single-PID smoke test) without
     # triggering the full batch dispatch below.
     parser = argparse.ArgumentParser()
-    parser.add_argument('--step', choices=['cells', 'stlfp', 'stpc'], default='cells',
+    parser.add_argument('--step', choices=['cells', 'stlfp', 'stpc', 'patch_slidingrp'], default='cells',
                         help='which per-insertion step to run (see README)')
     parser.add_argument('--overwrite', action='store_true', help='[cells step] recompute even if HDF5 already exists')
     parser.add_argument('--acg3d', action='store_true', help='[cells step] also compute 3D ACGs for all clusters')
@@ -359,13 +432,19 @@ if __name__ == '__main__':
 
     if args.step == 'cells':
         jobs = [
-            joblib.delayed(cell_features_wrapper)(pid=pid, overwrite=args.overwrite, compute_3dacg=args.acg3d)
+            joblib.delayed(cell_features_wrapper)(
+                pid=pid, overwrite=args.overwrite, compute_3dacg=args.acg3d, rp_kwargs=SLIDING_RP_PARAMS)
             for pid in pids if pid not in EXCLUDES
         ]
     elif args.step == 'stlfp':
         jobs = [joblib.delayed(stlfp_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
-    else:
+    elif args.step == 'stpc':
         jobs = [joblib.delayed(stpc_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
+    else:
+        jobs = [
+            joblib.delayed(patch_sliding_rp_v2_wrapper)(pid=pid, rp_kwargs=SLIDING_RP_PARAMS)
+            for pid in pids if pid not in EXCLUDES and OUTPUT_PATH.joinpath(pid, f'{pid}.h5').exists()
+        ]
 
     joblib.Parallel(
         n_jobs=48,
