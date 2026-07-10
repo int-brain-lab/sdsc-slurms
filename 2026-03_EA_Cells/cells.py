@@ -200,6 +200,47 @@ def patch_sliding_rp_v2(pid, **rp_kwargs):
     outfile_tmp.rename(outfile)
 
 
+def patch_acg3d(pid):
+    """
+    Compute the 3D (firing-rate decile x time-lag) ACG for one insertion and patch
+    it into the existing {pid}.h5 as `acgs_3d` — without recomputing waveforms,
+    log-ACGs, or the slidingRP2_* QC columns.
+
+    Use this to add `acgs_3d` to insertions that were run without `--acg3d`,
+    instead of `--overwrite --acg3d` (which redoes everything). Always
+    recomputes and overwrites `acgs_3d` if already present.
+
+    Every other array/dataframe is copied across unchanged via h5py's raw
+    `copy()` (preserves compression/attrs exactly) into a fresh tmp file, which
+    is then renamed over the original — same atomic discipline as
+    cell_features(), protecting the already-computed parts of the file from a
+    crash mid-patch.
+
+    Parameters
+    ----------
+    pid : str
+        Probe insertion UUID; {pid}.h5 must already exist.
+    """
+    outfile = OUTPUT_PATH.joinpath(pid, f'{pid}.h5')
+    outfile_tmp = outfile.with_suffix('.h5.tmp')
+
+    one = ONE()
+    ssl = SpikeSortingLoader(one=one, pid=pid)
+    spikes, _, _ = ssl.load_spike_sorting(dataset_types=['spikes.times', 'spikes.clusters'])
+    sr = ssl.raw_electrophysiology(band='ap', stream=True)
+
+    df_clusters = pd.read_hdf(outfile, key='df_clusters')
+    acgs_3d = compute_3d_acgs(spikes['times'], spikes['clusters'], df_clusters.index.values, sr.fs)
+
+    with h5py.File(outfile, 'r') as h5_src, h5py.File(outfile_tmp, 'w') as h5_dst:
+        for key in h5_src.keys():
+            if key != 'acgs_3d':
+                h5_src.copy(key, h5_dst)
+        h5_dst.attrs.update(h5_src.attrs)
+        h5_dst.create_dataset('acgs_3d', data=acgs_3d, compression='gzip', compression_opts=4)
+    outfile_tmp.rename(outfile)
+
+
 def cell_features(pid, overwrite=False, compute_3dacg=False, rp_kwargs=None):
     """
     Extract per-cluster features for one insertion and save to a single HDF5 file.
@@ -415,6 +456,14 @@ def patch_sliding_rp_v2_wrapper(pid, rp_kwargs=None):
         traceback_path.write_text(traceback.format_exc())
 
 
+def patch_acg3d_wrapper(pid):
+    try:
+        patch_acg3d(pid)
+    except Exception:
+        traceback_path = OUTPUT_PATH.joinpath(f'{pid}_patch_acg3d.error')
+        traceback_path.write_text(traceback.format_exc())
+
+
 def worker_init():
     delay = (os.getpid() % 100)  # 0..99 s stagger to avoid thundering-herd on ONE auth
     time.sleep(delay)
@@ -424,8 +473,8 @@ if __name__ == '__main__':
     # Guarded so cells.py can be imported (e.g. for a single-PID smoke test) without
     # triggering the full batch dispatch below.
     parser = argparse.ArgumentParser()
-    parser.add_argument('--step', choices=['cells', 'stlfp', 'stpc', 'patch_slidingrp'], default='cells',
-                        help='which per-insertion step to run (see README)')
+    parser.add_argument('--step', choices=['cells', 'stlfp', 'stpc', 'patch_slidingrp', 'patch_acg3d'],
+                        default='cells', help='which per-insertion step to run (see README)')
     parser.add_argument('--overwrite', action='store_true', help='[cells step] recompute even if HDF5 already exists')
     parser.add_argument('--acg3d', action='store_true', help='[cells step] also compute 3D ACGs for all clusters')
     args = parser.parse_args()
@@ -440,9 +489,14 @@ if __name__ == '__main__':
         jobs = [joblib.delayed(stlfp_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
     elif args.step == 'stpc':
         jobs = [joblib.delayed(stpc_wrapper)(pid=pid) for pid in pids if pid not in EXCLUDES]
-    else:
+    elif args.step == 'patch_slidingrp':
         jobs = [
             joblib.delayed(patch_sliding_rp_v2_wrapper)(pid=pid, rp_kwargs=SLIDING_RP_PARAMS)
+            for pid in pids if pid not in EXCLUDES and OUTPUT_PATH.joinpath(pid, f'{pid}.h5').exists()
+        ]
+    else:
+        jobs = [
+            joblib.delayed(patch_acg3d_wrapper)(pid=pid)
             for pid in pids if pid not in EXCLUDES and OUTPUT_PATH.joinpath(pid, f'{pid}.h5').exists()
         ]
 
