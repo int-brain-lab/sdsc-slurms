@@ -11,6 +11,7 @@ clusters.waveforms_peak.npy   (925 251, 128)       float16  226 MB
 clusters.acgs_log.npy         (925 251, 128)       float16  226 MB  – normalised by spike_count (sp/sp)
 acgs_log.times.npy            (128,)               float64  <1 MB
 clusters.acgs_3d.npy          (925 251, 10, 201)   float16  3.5 GB  – only insertions run with --acg3d
+acgs_3d.times.npy             (201,)               float64  <1 MB   – log-time bin centres, ms
 clusters_good.stpc.npy        (108 606, 1000)      float16  207 MB
 clusters_good.stlfp.npy       (108 606, 250)       float16   52 MB
 
@@ -83,6 +84,7 @@ for fil in tqdm.tqdm(h5_files, desc='reduce'):
         acgs_log_times = h5['acgs_log_times'][:]  # identical across insertions; keep last
         if 'acgs_3d' in h5:
             acc_acgs_3d.append(h5['acgs_3d'][:])
+            acgs_3d_times = h5['acgs_3d_times'][:]  # identical across insertions; keep last
         else:
             has_acgs_3d = False
     df_cl = pd.read_hdf(fil, key='df_clusters')
@@ -139,6 +141,7 @@ np.save(AGG_PATH.joinpath('clusters.acgs_log.npy'), acgs_log_norm.astype(np.floa
 np.save(AGG_PATH.joinpath('acgs_log.times.npy'), acgs_log_times)
 if acgs_3d is not None:
     np.save(AGG_PATH.joinpath('clusters.acgs_3d.npy'), acgs_3d.astype(np.float16))
+    np.save(AGG_PATH.joinpath('acgs_3d.times.npy'), acgs_3d_times)
 df_clusters.to_parquet(AGG_PATH.joinpath('clusters.table.pqt'))
 df_clusters_good.to_parquet(AGG_PATH.joinpath('clusters_good.table.pqt'))
 df_avg_waveforms_index.to_parquet(AGG_PATH.joinpath('waveforms.table.pqt'))

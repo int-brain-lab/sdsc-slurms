@@ -16,6 +16,7 @@ from brainbox.io.one import SpikeSortingLoader
 from spikeinterface.core import NumpySorting
 from spikeinterface.postprocessing import compute_acgs_3d
 from slidingRP.metrics import slidingRP_all
+from npyx.corr import convert_acg_log
 
 import ephysatlas.cells
 from ephysatlas.cells import compute_log_acg, compute_burstiness_and_memory
@@ -41,13 +42,18 @@ WIN_SIZE = 2.0      # s one-sided window
 N_LOG_BINS = 128
 LOG_TRIM = 1e-3     # s start of log axis (refractory period cutoff)
 
-# ── 3D ACG parameters (firing-rate decile x time-lag) ─────────────────────────
-# Matches Han Yu's NEMO/ICLR pipeline (compute_3dACG_IBL.py): cbin=1 ms, cwin=2000 ms,
-# 10 firing-rate quantiles, 250 ms smoothing -> (n_clusters, 10, 201) per insertion.
+# ── 3D ACG parameters (firing-rate decile x log-time-lag) ────────────────────
+# Matches Han Yu's NEMO/ICLR pipeline (compute_3dACG_IBL.py): linear ACG at
+# cbin=1 ms/cwin=2000 ms, 10 firing-rate quantiles, 250 ms smoothing, then
+# resampled onto a log-time axis via npyx.corr.convert_acg_log's own defaults
+# -> (n_clusters, 10, 201) per insertion.
 ACG3D_WINDOW_MS = 2000.0
 ACG3D_BIN_MS = 1.0
 ACG3D_NUM_FIRING_RATE_QUANTILES = 10
 ACG3D_SMOOTHING_MS = 250.0
+ACG3D_N_LOG_BINS = 100      # -> 2*100+1 = 201 bins after mirroring
+ACG3D_START_LOG_MS = 0.8
+ACG3D_SMOOTH_SD = 1
 
 # ── Sliding RP v2 parameters ───────────────────────────────────────────────────
 # Forwarded as-is to compute_sliding_rp_v2 / patch_sliding_rp_v2 (cells and
@@ -63,7 +69,12 @@ pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
 
 def compute_3d_acgs(spike_times, spike_clusters, cluster_ids, fs):
     """
-    Firing-rate-decile x time-lag 3D autocorrelogram, one per cluster.
+    Firing-rate-decile x log-time-lag 3D autocorrelogram, one per cluster.
+
+    Computes the linear-time 3D ACG (spikeinterface's compute_acgs_3d, same
+    algorithm as npyx.c4.fast_acg3d), then resamples each cluster onto Han Yu's
+    NEMO/ICLR log-time axis via the real npyx.corr.convert_acg_log (not a port,
+    for exact numerical fidelity — interpolation + gaussian smoothing + mirroring).
 
     Parameters
     ----------
@@ -78,8 +89,10 @@ def compute_3d_acgs(spike_times, spike_clusters, cluster_ids, fs):
 
     Returns
     -------
-    np.ndarray
+    acgs_3d : np.ndarray
         (len(cluster_ids), ACG3D_NUM_FIRING_RATE_QUANTILES, 201) float32 array.
+    t_log : np.ndarray
+        (201,) log-time bin centres, in ms (negative, zero, then positive lags).
     """
     sorting = NumpySorting.from_samples_and_labels(
         samples_list=np.round(spike_times * fs).astype(np.int64),
@@ -87,7 +100,7 @@ def compute_3d_acgs(spike_times, spike_clusters, cluster_ids, fs):
         sampling_frequency=fs,
         unit_ids=cluster_ids,
     )
-    acgs_3d, _, _ = compute_acgs_3d(
+    acgs_3d_lin, _, _ = compute_acgs_3d(
         sorting,
         window_ms=ACG3D_WINDOW_MS,
         bin_ms=ACG3D_BIN_MS,
@@ -95,7 +108,15 @@ def compute_3d_acgs(spike_times, spike_clusters, cluster_ids, fs):
         smoothing_factor=ACG3D_SMOOTHING_MS,
         n_jobs=1,  # insertions are already parallelised across workers below
     )
-    return acgs_3d.astype(np.float32)
+    n_log_bins = 2 * ACG3D_N_LOG_BINS + 1
+    acgs_3d = np.empty((acgs_3d_lin.shape[0], ACG3D_NUM_FIRING_RATE_QUANTILES, n_log_bins), dtype=np.float32)
+    t_log = None
+    for i, acg_lin in enumerate(acgs_3d_lin):
+        acgs_3d[i], t_log = convert_acg_log(
+            acg_lin, cbin=ACG3D_BIN_MS, cwin=ACG3D_WINDOW_MS, n_log_bins=ACG3D_N_LOG_BINS,
+            start_log_ms=ACG3D_START_LOG_MS, smooth_sd=ACG3D_SMOOTH_SD,
+        )
+    return acgs_3d, t_log
 
 
 def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur, conf_thresh=90,
@@ -202,13 +223,13 @@ def patch_sliding_rp_v2(pid, **rp_kwargs):
 
 def patch_acg3d(pid):
     """
-    Compute the 3D (firing-rate decile x time-lag) ACG for one insertion and patch
-    it into the existing {pid}.h5 as `acgs_3d` — without recomputing waveforms,
-    log-ACGs, or the slidingRP2_* QC columns.
+    Compute the 3D (firing-rate decile x log-time-lag) ACG for one insertion and
+    patch it into the existing {pid}.h5 as `acgs_3d`/`acgs_3d_times` — without
+    recomputing waveforms, log-ACGs, or the slidingRP2_* QC columns.
 
     Use this to add `acgs_3d` to insertions that were run without `--acg3d`,
     instead of `--overwrite --acg3d` (which redoes everything). Always
-    recomputes and overwrites `acgs_3d` if already present.
+    recomputes and overwrites `acgs_3d`/`acgs_3d_times` if already present.
 
     Every other array/dataframe is copied across unchanged via h5py's raw
     `copy()` (preserves compression/attrs exactly) into a fresh tmp file, which
@@ -230,14 +251,15 @@ def patch_acg3d(pid):
     sr = ssl.raw_electrophysiology(band='ap', stream=True)
 
     df_clusters = pd.read_hdf(outfile, key='df_clusters')
-    acgs_3d = compute_3d_acgs(spikes['times'], spikes['clusters'], df_clusters.index.values, sr.fs)
+    acgs_3d, acgs_3d_times = compute_3d_acgs(spikes['times'], spikes['clusters'], df_clusters.index.values, sr.fs)
 
     with h5py.File(outfile, 'r') as h5_src, h5py.File(outfile_tmp, 'w') as h5_dst:
         for key in h5_src.keys():
-            if key != 'acgs_3d':
+            if key not in ('acgs_3d', 'acgs_3d_times'):
                 h5_src.copy(key, h5_dst)
         h5_dst.attrs.update(h5_src.attrs)
         h5_dst.create_dataset('acgs_3d', data=acgs_3d, compression='gzip', compression_opts=4)
+        h5_dst.create_dataset('acgs_3d_times', data=acgs_3d_times.astype(np.float64))
     outfile_tmp.rename(outfile)
 
 
@@ -252,9 +274,9 @@ def cell_features(pid, overwrite=False, compute_3dacg=False, rp_kwargs=None):
     overwrite : bool
         If True, delete any existing output file and recompute.
     compute_3dacg : bool
-        If True, also compute the 3D (firing-rate decile x time-lag) ACG for all
-        clusters and write it as `acgs_3d`. Off by default: much more expensive
-        than `acgs_log_bins`.
+        If True, also compute the 3D (firing-rate decile x log-time-lag) ACG for
+        all clusters and write it as `acgs_3d`/`acgs_3d_times`. Off by default:
+        much more expensive than `acgs_log_bins`.
     rp_kwargs : dict, optional
         Forwarded to `compute_sliding_rp_v2` (conf_thresh, cont_thresh, rp_reject,
         force_pass). Defaults there apply if not given.
@@ -266,6 +288,7 @@ def cell_features(pid, overwrite=False, compute_3dacg=False, rp_kwargs=None):
         acgs_log_bins            (n_clusters, N_LOG_BINS)
         acgs_log_times           (N_LOG_BINS,)
         acgs_3d                  (n_clusters, 10, 201)      only if compute_3dacg=True
+        acgs_3d_times            (201,)                     only if compute_3dacg=True
       DataFrames (pandas HDFStore, appended):
         df_clusters              cluster table after ssl merge
         avg_waveforms_index      pid / cluster_id / abs_channel for each flat trace row
@@ -329,7 +352,7 @@ def cell_features(pid, overwrite=False, compute_3dacg=False, rp_kwargs=None):
 
     # 3D ACGs (all clusters, opt-in: expensive)
     if compute_3dacg:
-        acgs_3d = compute_3d_acgs(spikes['times'], spikes['clusters'], df_clusters.index.values, sr.fs)
+        acgs_3d, acgs_3d_times = compute_3d_acgs(spikes['times'], spikes['clusters'], df_clusters.index.values, sr.fs)
 
     # Burstiness and memory (all clusters)
     bm = np.array(
@@ -356,6 +379,7 @@ def cell_features(pid, overwrite=False, compute_3dacg=False, rp_kwargs=None):
         if compute_3dacg:
             h5.create_dataset('acgs_3d', data=acgs_3d,
                               compression='gzip', compression_opts=4)
+            h5.create_dataset('acgs_3d_times', data=acgs_3d_times.astype(np.float64))
         h5.attrs['pid'] = pid
         h5.attrs['n_clusters'] = n_clusters
         h5.attrs['n_good'] = n_good

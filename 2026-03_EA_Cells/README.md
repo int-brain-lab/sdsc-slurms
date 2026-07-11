@@ -106,7 +106,8 @@ Arrays (`h5py`, gzip level 4 where large):
 | `avg_waveform_peak_channel` | `(n_clusters, ns)`             | float32 | Mean waveform on each cluster's own peak channel only |
 | `acgs_log_bins`             | `(n_clusters, 128)`            | float32 | Log-time-binned ACG, raw spike counts (unnormalised — `aggregate.py` divides by `spike_count`) |
 | `acgs_log_times`            | `(128,)`                       | float64 | Lag-time bin centers, seconds, log-spaced from 1 ms to 2 s |
-| `acgs_3d`                   | `(n_clusters, 10, 201)`        | float32 | Only if `--acg3d`. 10 firing-rate deciles x 201 time-lag bins (±1000 ms at 1 ms resolution) |
+| `acgs_3d`                   | `(n_clusters, 10, 201)`        | float32 | Only if `--acg3d`. 10 firing-rate deciles x 201 log-time-lag bins (npyx.corr.convert_acg_log of the linear ACG) |
+| `acgs_3d_times`              | `(201,)`                       | float64 | Only if `--acg3d`. Log-time bin centres, ms (negative, zero, positive lags) |
 
 DataFrames (pandas `HDFStore`, `format='fixed'`), all indexed by `cluster_id` unless noted:
 
