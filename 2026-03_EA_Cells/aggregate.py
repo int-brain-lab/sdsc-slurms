@@ -106,11 +106,18 @@ for fil in tqdm.tqdm(h5_files, desc='reduce'):
     else:
         has_stpc = False
 
+# Concatenate then immediately drop the per-file accumulator: otherwise the list
+# of chunks and the single concatenated copy both stay alive (~2x the biggest
+# arrays, ~34 GB for waveforms + acgs_3d alone).
 avg_waveforms = np.concatenate(acc_avg_waveforms, axis=0)
+del acc_avg_waveforms
 waveforms_peak = np.concatenate(acc_waveforms_peak, axis=0)
+del acc_waveforms_peak
 acgs_log = np.concatenate(acc_acgs_log, axis=0)
+del acc_acgs_log
 # aligned with clusters.table.pqt (all units); only present if every insertion ran with --acg3d
 acgs_3d = np.concatenate(acc_acgs_3d, axis=0) if has_acgs_3d and acc_acgs_3d else None
+del acc_acgs_3d
 df_clusters = pd.concat(acc_df_clusters)
 df_clusters_good = pd.concat(acc_df_good)
 df_avg_waveforms_index = pd.concat(acc_df_avg_waveforms_index, ignore_index=True)
@@ -133,28 +140,41 @@ print(f'clusters_good.stpc      {stpc.shape if stpc is not None else "skipped (m
 print(f'clusters_good.stlfp     {stlfp.shape if stlfp is not None else "skipped (missing in some insertions)"}')
 
 acgs_log_norm = acgs_log / df_clusters['spike_count'].values[:, np.newaxis]
+del acgs_log
 
 AGG_PATH.mkdir(parents=True, exist_ok=True)
-np.save(AGG_PATH.joinpath('waveforms.voltage.npy'), avg_waveforms.astype(np.float16))
-np.save(AGG_PATH.joinpath('clusters.waveforms_peak.npy'), waveforms_peak.astype(np.float16))
-np.save(AGG_PATH.joinpath('clusters.acgs_log.npy'), acgs_log_norm.astype(np.float16))
+AGG_PATH_F32.mkdir(parents=True, exist_ok=True)
+
+
+def save_f16_f32(name, arr, f32=None):
+    """Write `arr` to the float16 store and the float32 archive, then free it.
+
+    Saving both dtypes back-to-back and dropping the source keeps peak RAM at one
+    big array (plus one transient cast) instead of every array times two dtypes.
+    `f32` overrides what goes to the archive (pass the array as-is when it is
+    already float32, to skip a pointless full-size copy).
+    """
+    np.save(AGG_PATH.joinpath(name), arr.astype(np.float16))
+    np.save(AGG_PATH_F32.joinpath(name), arr if f32 is None else f32)
+
+
+# avg_waveforms is already float32 (written as such by cells.py) -> archive it
+# directly rather than materialising an identical .astype(np.float32) copy.
+save_f16_f32('waveforms.voltage.npy', avg_waveforms, f32=avg_waveforms)
+del avg_waveforms
+save_f16_f32('clusters.waveforms_peak.npy', waveforms_peak, f32=waveforms_peak.astype(np.float32))
+del waveforms_peak
+save_f16_f32('clusters.acgs_log.npy', acgs_log_norm, f32=acgs_log_norm.astype(np.float32))
+del acgs_log_norm
 np.save(AGG_PATH.joinpath('acgs_log.times.npy'), acgs_log_times)
 if acgs_3d is not None:
-    np.save(AGG_PATH.joinpath('clusters.acgs_3d.npy'), acgs_3d.astype(np.float16))
+    save_f16_f32('clusters.acgs_3d.npy', acgs_3d, f32=acgs_3d.astype(np.float32))
     np.save(AGG_PATH.joinpath('acgs_3d.times.npy'), acgs_3d_times)
+    del acgs_3d
+if stpc is not None:
+    save_f16_f32('clusters_good.stpc.npy', stpc, f32=stpc.astype(np.float32))
+    save_f16_f32('clusters_good.stlfp.npy', stlfp, f32=stlfp.astype(np.float32))
+
 df_clusters.to_parquet(AGG_PATH.joinpath('clusters.table.pqt'))
 df_clusters_good.to_parquet(AGG_PATH.joinpath('clusters_good.table.pqt'))
 df_avg_waveforms_index.to_parquet(AGG_PATH.joinpath('waveforms.table.pqt'))
-if stpc is not None:
-    np.save(AGG_PATH.joinpath('clusters_good.stpc.npy'), stpc.astype(np.float16))
-    np.save(AGG_PATH.joinpath('clusters_good.stlfp.npy'), stlfp.astype(np.float16))
-
-AGG_PATH_F32.mkdir(parents=True, exist_ok=True)
-np.save(AGG_PATH_F32.joinpath('waveforms.voltage.npy'), avg_waveforms.astype(np.float32))
-np.save(AGG_PATH_F32.joinpath('clusters.waveforms_peak.npy'), waveforms_peak.astype(np.float32))
-np.save(AGG_PATH_F32.joinpath('clusters.acgs_log.npy'), acgs_log_norm.astype(np.float32))
-if acgs_3d is not None:
-    np.save(AGG_PATH_F32.joinpath('clusters.acgs_3d.npy'), acgs_3d.astype(np.float32))
-if stpc is not None:
-    np.save(AGG_PATH_F32.joinpath('clusters_good.stpc.npy'), stpc.astype(np.float32))
-    np.save(AGG_PATH_F32.joinpath('clusters_good.stlfp.npy'), stlfp.astype(np.float32))
