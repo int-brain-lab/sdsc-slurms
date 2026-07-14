@@ -47,7 +47,11 @@ LOG_TRIM = 1e-3     # s start of log axis (refractory period cutoff)
 # Forwarded as-is to compute_sliding_rp_v2 / patch_sliding_rp_v2 (cells and
 # patch_slidingrp steps). Edit and re-run --step patch_slidingrp to re-tune
 # without recomputing waveforms/ACGs.
-SLIDING_RP_PARAMS = dict(conf_thresh=90, cont_thresh=10, rp_reject=0.0005, force_pass=True)
+SLIDING_RP_PARAMS = dict(conf_thresh=70, cont_thresh=10, rp_reject=0.0005, force_pass=True)
+
+# Hard refractory period below which a cluster is flagged as contaminated: a
+# cluster with any inter-spike interval shorter than this cannot be a single unit.
+RP_CONTAM_THRESH = 1.5e-3  # s
 
 file_insertions = TABLES_DIR.parent.joinpath('df_probe_details_ibl_neuropixel_brainwide_01.pqt')
 
@@ -88,7 +92,7 @@ def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur, conf_thresh=90,
         Indexed like `df_clusters`, columns: slidingRP2_max_confidence,
         slidingRP2_min_contamination, slidingRP2_rp_min_val,
         slidingRP2_n_spikes_below2, slidingRP2_firing_rate, slidingRP2_viol,
-        slidingRP2_viol_forced.
+        slidingRP2_viol_forced, is_contaminated.
     """
     rp = slidingRP_all(
         spikes['times'], spikes['clusters'],
@@ -105,6 +109,15 @@ def compute_sliding_rp_v2(spikes, df_clusters, fs, rec_dur, conf_thresh=90,
         'slidingRP2_viol': rp['value'],
         'slidingRP2_viol_forced': rp['value_forced'],
     }, index=rp['cidx'])
+
+    # Contamination flag: True when the shortest inter-spike interval of a cluster
+    # falls within the hard refractory period (RP_CONTAM_THRESH). spikes['times']
+    # is globally time-sorted, so each per-cluster subset stays time-ordered and a
+    # single groupby-diff yields the min ISI without re-sorting.
+    times = pd.Series(spikes['times'], index=spikes['clusters'])
+    min_isi = times.groupby(level=0).diff().groupby(level=0).min()
+    df_rp['is_contaminated'] = (min_isi < RP_CONTAM_THRESH).reindex(df_rp.index, fill_value=False)
+
     return df_rp.reindex(df_clusters.index)
 
 
@@ -137,13 +150,28 @@ def patch_sliding_rp_v2(pid, **rp_kwargs):
 
     one = ONE()
     ssl = SpikeSortingLoader(one=one, pid=pid)
-    spikes, _, _ = ssl.load_spike_sorting(dataset_types=['spikes.times', 'spikes.clusters'])
+    spikes, clusters, _ = ssl.load_spike_sorting(dataset_types=['spikes.times', 'spikes.clusters'])
     sr = ssl.raw_electrophysiology(band='ap', stream=True)
 
     df_clusters = pd.read_hdf(outfile, key='df_clusters')
     df_clusters_extended = pd.read_hdf(outfile, key='df_clusters_extended')
+
+    # Safety: the patch aligns freshly-loaded spikes to the *stored* df_clusters by
+    # integer cluster id (0..N). A re-run spike sorting would reuse the same ids for
+    # different units and silently misalign the patched columns; clusters.uuids are
+    # stable per unit, so refuse to patch on any mismatch. The wrapper turns this into
+    # a {pid}_patch_slidingrp.error and leaves the existing {pid}.h5 untouched.
+    fresh_uuids = np.asarray(clusters['uuids']).ravel()
+    stored_uuids = df_clusters['uuids'].to_numpy()
+    if not np.array_equal(fresh_uuids, stored_uuids):
+        raise ValueError(
+            f'{pid}: clusters.uuids from ONE no longer match stored {pid}.h5 '
+            f'({fresh_uuids.size} vs {stored_uuids.size} clusters); '
+            f'spike sorting changed — refusing to patch.'
+        )
     df_clusters_extended = df_clusters_extended.drop(
-        columns=[c for c in df_clusters_extended.columns if c.startswith('slidingRP2_')]
+        columns=[c for c in df_clusters_extended.columns
+                 if c.startswith('slidingRP2_') or c == 'is_contaminated']
     )
     df_rp2 = compute_sliding_rp_v2(spikes, df_clusters, sr.fs, rec_dur=sr.ns / sr.fs, **rp_kwargs)
     df_clusters_extended = df_clusters_extended.join(df_rp2)
@@ -183,10 +211,24 @@ def patch_acg3d(pid):
 
     one = ONE()
     ssl = SpikeSortingLoader(one=one, pid=pid)
-    spikes, _, _ = ssl.load_spike_sorting(dataset_types=['spikes.times', 'spikes.clusters'])
+    spikes, clusters, _ = ssl.load_spike_sorting(dataset_types=['spikes.times', 'spikes.clusters'])
     sr = ssl.raw_electrophysiology(band='ap', stream=True)
 
     df_clusters = pd.read_hdf(outfile, key='df_clusters')
+
+    # Safety: acgs_3d rows are aligned to the *stored* df_clusters by integer cluster
+    # id, which is only meaningful if the underlying units are unchanged. clusters.uuids
+    # are stable per unit, so refuse to patch on any mismatch (a re-run spike sorting).
+    # The wrapper turns this into a {pid}_patch_acg3d.error and leaves {pid}.h5 untouched.
+    fresh_uuids = np.asarray(clusters['uuids']).ravel()
+    stored_uuids = df_clusters['uuids'].to_numpy()
+    if not np.array_equal(fresh_uuids, stored_uuids):
+        raise ValueError(
+            f'{pid}: clusters.uuids from ONE no longer match stored {pid}.h5 '
+            f'({fresh_uuids.size} vs {stored_uuids.size} clusters); '
+            f'spike sorting changed — refusing to patch.'
+        )
+
     acgs_3d, acgs_3d_times = compute_3d_acgs(spikes['times'], spikes['clusters'], df_clusters.index.values, sr.fs)
 
     with h5py.File(outfile, 'r') as h5_src, h5py.File(outfile_tmp, 'w') as h5_dst:
