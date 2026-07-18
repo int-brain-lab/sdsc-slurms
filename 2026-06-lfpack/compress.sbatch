@@ -14,6 +14,15 @@ PYTHON_SCRIPT=~/Documents/sdsc-slurms/2026-06-lfpack/compress.py
 export SCRATCH_ROOT=/scratch/lfpack_${SLURM_JOB_ID}
 mkdir -p $SCRATCH_ROOT
 
+# Pin BLAS/OpenMP to one thread per process: the job already saturates the node with
+# N_OUTER × N_INNER = 48 worker processes, so letting each also spawn 48 BLAS threads
+# (numpy SVD, scipy decimate/FFT) would oversubscribe the 48 cores ~48×.
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
+
 module load python/3.11
 
 $PYTHON_EXEC -u $PYTHON_SCRIPT $@  # pass --overwrite to recompute all
