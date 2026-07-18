@@ -52,16 +52,27 @@ ceph and reused on reruns) then SVD+WP compression (×2 levels, ~2 MB each). The
 `N_OUTER=4` PIDs concurrently × `N_INNER=12` cores = 48. Four in parallel hides ceph I/O
 latency; scaling one PID past ~12–16 workers gives diminishing returns.
 
-Throughput: ~36 min/PID cached, ~65 min fresh → ~160 PIDs / 24 h node.
+Throughput (measured job 2451554, 6 PIDs, `--overwrite`, with the BLAS thread caps):
+**~2 core-hours/PID** — the parallelism-independent invariant to plan from. At 4×12 with
+full waves (~90% CPU efficiency) that is **~20 PIDs/h/node**; budget ~15/h to absorb
+ceph-fetch on first touch, warmup, and the half-empty final wave. Per-PID cost scales with
+recording length. (Short jobs show lower CPU efficiency — e.g. the 6-PID validation ran at
+56%, since its second wave filled only 2 of 4 slots; full sweeps stay near 90%.)
 
 ## Horizontal scaling with SLURM arrays
 
 `compress.sbatch` sets `--array`; each task slices `pids` by `$SLURM_ARRAY_TASK_ID`, and
-the sentinel-skip makes reruns and overlapping arrays safe.
+the sentinel-skip makes reruns and overlapping arrays safe. At ~15–20 PIDs/h/node a single
+node clears ~360–480 PIDs within the 24 h wall-limit, so size the array to keep each task
+under that:
 
 ```bash
-#SBATCH --array=0-9   # 10 nodes → ~37 PIDs/h → ~27 h for 1000 PIDs
+#SBATCH --array=0-3   #  4 nodes → ~60–80 PIDs/h → ~500 PIDs in  ~7–8 h
+#SBATCH --array=0-9   # 10 nodes → ~150–200 PIDs/h → ~700 PIDs in ~4 h
 ```
+
+Get the total PID count from the first line each task logs — `Task 0/N: queuing M PIDs`
+(multiply M by the array size) — then divide by ~15–20/h/node.
 
 ## Sync results to local
 
