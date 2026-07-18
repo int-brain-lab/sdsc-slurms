@@ -41,7 +41,7 @@ CADZOW_KWARGS = dict(rank=5, niter=1, fmax=None, nswx=64, ovx=32, gap_threshold=
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRATCH_ROOT = Path(os.environ.get('SCRATCH_ROOT', '/tmp/lfpack_local'))
-OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/ea/denoised_lfp')
+OUTPUT_ROOT  = Path(os.environ.get('OUTPUT_ROOT', '/mnt/home/owinter/ceph/ea/denoised_lfp'))
 TABLES_DIR   = Path('/mnt/home/owinter/Documents/cache_tables/one_cache-ibl_neuropixel_brainwide_01')
 FILE_INSERTIONS = TABLES_DIR.parent.joinpath('df_probe_details_ibl_neuropixel_brainwide_01.pqt')
 
@@ -84,6 +84,10 @@ def compress_pid(pid, overwrite=False):
     # If the ceph archive exists from a prior run, seed scratch from it to skip recomputation.
     cadzow_scratch  = scratch_dir.joinpath('lf_resampled_car_cadzow.npy')
     cadzow_archive  = out_dir.joinpath('lf_resampled_car_cadzow.npy')
+    if overwrite:
+        # Stage 1 (decimation + saturation muting) must recompute from the raw .cbin,
+        # so drop the stale pre-muting checkpoint rather than seeding from it.
+        cadzow_archive.unlink(missing_ok=True)
     if cadzow_archive.exists() and not cadzow_scratch.exists():
         shutil.copy2(cadzow_archive, cadzow_scratch)
         print(f'{pid[:8]} Cadzow: seeded from ceph archive', flush=True)
@@ -134,13 +138,20 @@ def worker_init():
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--overwrite', action='store_true', help='recompute even if .done already exists')
+parser.add_argument('--pids', nargs='*', default=None, help='explicit PID list (overrides the parquet selection; for validation runs)')
+parser.add_argument('--limit', type=int, default=None, help='process at most N PIDs after array slicing (for validation runs)')
 args = parser.parse_args()
 
-df_insertions = pd.read_parquet(FILE_INSERTIONS)
-pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
+if args.pids:
+    pids = args.pids
+else:
+    df_insertions = pd.read_parquet(FILE_INSERTIONS)
+    pids = list(df_insertions.loc[df_insertions['histology'] != '', 'pid'])
 task_id = int(os.environ.get('SLURM_ARRAY_TASK_ID', 0))
 n_tasks = int(os.environ.get('SLURM_ARRAY_TASK_COUNT', 1))
 pids = pids[task_id::n_tasks]
+if args.limit is not None:
+    pids = pids[:args.limit]
 print(f'Task {task_id}/{n_tasks}: queuing {len(pids)} PIDs  ({N_OUTER} outer × {N_INNER} inner cores)', flush=True)
 
 jobs = [joblib.delayed(compress_pid)(pid=pid, overwrite=args.overwrite) for pid in pids]

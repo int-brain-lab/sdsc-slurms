@@ -1,99 +1,71 @@
 # LFPack compression — SDSC Popeye
 
-Compresses the IBL LFP recordings into HDF5 archives using SVD + wavelet-packet thresholding
-(`lfpack`).  Produces two compression levels per PID (default and aggressive).
+Compresses IBL LFP recordings into HDF5 archives with `lfpack` (SVD + wavelet-packet
+thresholding). ADC-saturated stretches are detected on the raw LFP band and muted before
+compression; the saturated intervals are stored in each archive. Two levels are written
+per PID (default and aggressive).
 
 ## Output layout
 
 ```
-/mnt/home/owinter/ceph/ea/denoised_lfp/
+$OUTPUT_ROOT/                     # /mnt/home/owinter/ceph/ea/denoised_lfp (override via env)
   <pid>/
-    lf_compressed.h5              default   (ε=150, α=28)
-    lf_compressed_aggressive.h5   aggressive (ε=450, α=96)
+    lf_compressed.h5              default    (ε=150, α=28)
+    lf_compressed_aggressive.h5   aggressive (ε=450, α=96)   ← completion sentinel
     lf_resampled_car_cadzow.npy   Cadzow checkpoint archived after first run (~1.4 GB)
-    <pid>_compress.error          traceback written on failure (absent on success)
+    <pid>_compress.error          traceback on failure (absent on success)
 ```
 
-`lf_compressed_aggressive.h5` is written last and acts as the completion sentinel.
+`lf_compressed_aggressive.h5` is written last via atomic rename, so its presence = done.
 
 ## Commands
 
 ```bash
-# First run (or add new PIDs)
-cd /mnt/home/owinter/Documents/sdsc-slurms/2026-06-lfpack && sbatch compress.sbatch
+cd ~/Documents/sdsc-slurms/2026-06-lfpack
+PY=/mnt/home/owinter/Documents/ephys-atlas/.venv/bin/python
 
-# Re-run all PIDs from scratch
-cd /mnt/home/owinter/Documents/sdsc-slurms/2026-06-lfpack && sbatch compress.sbatch --overwrite
+# Full run (skips PIDs already complete)
+sbatch compress.sbatch
 
-# Check progress — PIDs fully done (both H5 files present)
-find /mnt/home/owinter/ceph/ea/denoised_lfp -maxdepth 2 -name 'lf_compressed_aggressive.h5' | wc -l
+# Validate a few PIDs into a fresh folder (interactive, no queue)
+OUTPUT_ROOT=~/ceph/ea/denoised_lfp_test $PY -u compress.py --pids <pid1> <pid2>   # or --limit 3
 
-# Check progress — default pass only
-find /mnt/home/owinter/ceph/ea/denoised_lfp -maxdepth 2 -name 'lf_compressed.h5' | wc -l
+# Reprocess everything after a pipeline change: point at a new empty folder and run
+# normal mode (fresh folder → no stale caches → muting always applies), then delete
+# the old folder once happy.
+sbatch --export=ALL,OUTPUT_ROOT=~/ceph/ea/denoised_lfp_muted compress.sbatch
 
-# Check errors
-ls /mnt/home/owinter/ceph/ea/denoised_lfp/*/*.error 2>/dev/null
+# Force-recompute in place (deletes H5s + Cadzow checkpoint)
+sbatch compress.sbatch --overwrite
 
-# Live job stats (replace JOBID)
-sstat -j <JOBID>.batch --format=JobID,AveCPU,MaxRSS,MaxVMSize,NTasks
-sacct -j <JOBID> --format=JobID,Elapsed,CPUTime,CPUTimeRAW,NCPUS
+# Progress / errors
+find $OUTPUT_ROOT -maxdepth 2 -name 'lf_compressed_aggressive.h5' | wc -l   # PIDs done
+ls $OUTPUT_ROOT/*/*.error 2>/dev/null                                       # failures
+sacct -j <JOBID> --format=JobID,Elapsed,CPUTime,NCPUS
 ```
 
-## Parallelism strategy
+## Parallelism
 
-The node has 48 cores and 1 TB of local NVMe (`/scratch`).  Each PID goes through two
-sequential stages that are both CPU-bound and already internally parallelised:
+The node has 48 cores and 1 TB local NVMe (`/scratch`). Each PID runs two internally
+parallel stages: Cadzow decimation (writes the ~1.4 GB checkpoint to scratch, archived to
+ceph and reused on reruns) then SVD+WP compression (×2 levels, ~2 MB each). The job runs
+`N_OUTER=4` PIDs concurrently × `N_INNER=12` cores = 48. Four in parallel hides ceph I/O
+latency; scaling one PID past ~12–16 workers gives diminishing returns.
 
-1. **Cadzow decimation** — ProcessPoolExecutor, reads the `.cbin`, writes a float32
-   checkpoint (~1.4 GB at 250 Hz × 384 channels × 1 h) to **local NVMe scratch**.
-   The checkpoint is then archived to ceph and reused on subsequent runs.
-2. **SVD + WP compression** (×2 levels) — joblib Parallel, reads the checkpoint,
-   writes two tiny H5 archives (~2 MB each, CR ≈ 250–300×).
-
-```
-N_OUTER = 4  (PIDs in parallel via joblib outer loop)
-N_INNER = 12 (cores per PID for both Cadzow and SVD+WP stages)
-N_OUTER × N_INNER = 48  ← fully utilises the node
-```
-
-**Why 4 × 12 and not, say, 1 × 48?**
-
-- The Cadzow ProcessPoolExecutor uses a `spawn` context.  Scaling beyond ~12–16 workers
-  per PID gives diminishing returns due to process-spawn overhead and the relatively
-  small number of FFT-optimal chunks (~1400 per hour of recording).
-- Running 4 PIDs in parallel hides I/O latency: while one PID is downloading/reading
-  its `.cbin` from ceph, three others are computing.
-- Scratch usage stays negligible: 4 × 1.4 GB ≈ 6 GB at any moment, well within 1 TB.
-
-**Measured throughput (job 2441369, 17 h 51 min wall-clock, 100% CPU efficiency):**
-
-118 PIDs completed in 17 h 51 min → **6.6 PIDs/h**, ~36 min/PID average with 4 parallel workers.
-The per-PID time splits as:
-
-| Scenario                          | Time / PID |
-|-----------------------------------|------------|
-| Fresh (no Cadzow cache)           | ~65 min    |
-| Cached Cadzow on ceph (most PIDs) | ~36 min    |
-
-With the scratch fix, Cadzow is written to NVMe and archived to ceph on first run,
-so subsequent jobs reuse the cache via a fast sequential copy and stay near ~36 min/PID.
-
-A single 48-core node processes ~160 PIDs per 24 h job.
-This exceeds the wall-time limit for large datasets; use a SLURM array to scale horizontally.
+Throughput: ~36 min/PID cached, ~65 min fresh → ~160 PIDs / 24 h node.
 
 ## Horizontal scaling with SLURM arrays
 
-Split the PID list across N array tasks, each running on its own 48-core node:
+`compress.sbatch` sets `--array`; each task slices `pids` by `$SLURM_ARRAY_TASK_ID`, and
+the sentinel-skip makes reruns and overlapping arrays safe.
 
 ```bash
-#SBATCH --array=0-9   # 10 jobs × 3.7 PIDs/h ≈ 37 PIDs/h → ~27 h for 1000 PIDs
+#SBATCH --array=0-9   # 10 nodes → ~37 PIDs/h → ~27 h for 1000 PIDs
 ```
 
-Slice `pids` in `compress.py` by `$SLURM_ARRAY_TASK_ID` before the joblib call.
-The H5 existence check (both files present → skip) makes reruns and overlapping arrays safe.
-
-## Sync results to local / Elbocal
+## Sync results to local
 
 ```bash
-rsync -av --progress -e ssh --include='*/' --include='lf_compressed*.h5' --exclude='*' popeye:/mnt/home/owinter/ceph/ea/denoised_lfp /Users/olivier/Documents/datadisk/lfp-processing/lfpack 
+rsync -av --progress -e ssh --include='*/' --include='lf_compressed*.h5' --exclude='*' \
+  popeye:$OUTPUT_ROOT /Users/olivier/Documents/datadisk/lfp-processing/lfpack
 ```
