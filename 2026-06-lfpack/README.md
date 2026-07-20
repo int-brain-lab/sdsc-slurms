@@ -80,3 +80,23 @@ Get the total PID count from the first line each task logs — `Task 0/N: queuin
 rsync -av --progress -e ssh --include='*/' --include='lf_compressed*.h5' --exclude='*' \
   popeye:$OUTPUT_ROOT /Users/olivier/Documents/datadisk/lfp-processing/lfpack
 ```
+
+## Local post-processing: attach IBL metadata
+
+`attach_ibl_metadata.py` runs **locally** (not on the cluster) against the synced archives
+and attaches IBL information the cluster job doesn't have: per-channel brain locations
+(`ml`/`ap`/`dv`/`atlas_id`/`acronym` on `<pid>/00/meta`, from the ephys-atlas features
+dataframe with a `SpikeSortingLoader` fallback) and the sample→time sync affine
+(`fs_sync`/`t0_sync` on every scale, fitted from probe sync pulses, QC < 1 ms). It writes
+into every `*compressed*.h5` under `--local-root`, for whichever recordings each holds.
+
+Before writing channel annotations it runs a **geometry sanity check**: the source's
+on-probe `lateral_um`/`axial_um` are compared channel-by-channel against the archive's
+stored `geometry_x`/`geometry_y` (both µm). A mismatch means the source channel order
+doesn't line up with the archive, so brain locations would be misassigned — those PIDs are
+reported and their channels skipped (sync still attaches).
+
+```bash
+python attach_ibl_metadata.py --dry-run   # report only: geometry check + failure summary
+python attach_ibl_metadata.py             # write attrs into the local archives
+```
