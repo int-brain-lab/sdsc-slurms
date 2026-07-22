@@ -182,11 +182,25 @@ def main():
                         if pid not in geom_mismatch:
                             geom_mismatch.append(pid)
                     elif not args.dry_run:
+                        # Brain-location attrs only.  The bad-channel `labels` attr is
+                        # written by the compression step (from detect_bad_channels.py) and
+                        # must survive this pass untouched — snapshot it and assert it is
+                        # unchanged so a future edit here can never silently clobber it.
+                        had_labels = "labels" in meta0.attrs
+                        labels_before = meta0.attrs["labels"][:] if had_labels else None
                         meta0.attrs["ml"] = channels["ml"]
                         meta0.attrs["ap"] = channels["ap"]
                         meta0.attrs["dv"] = channels["dv"]
                         meta0.attrs["atlas_id"] = channels["atlas_id"]
                         meta0.attrs["acronym"] = channels["acronym"]
+                        if had_labels:
+                            assert np.array_equal(meta0.attrs["labels"][:], labels_before), (
+                                f"{pid} [{h5file.name}]: bad-channel labels changed while "
+                                "attaching brain regions"
+                            )
+                        else:
+                            log.warning(f"  {pid} [{h5file.name}]: no bad-channel `labels` "
+                                        "attr (was detection fed through at compression?)")
 
                 # ── sync (all scales, rate-scaled from base) ────────────────────
                 if qc_pass and not args.dry_run:

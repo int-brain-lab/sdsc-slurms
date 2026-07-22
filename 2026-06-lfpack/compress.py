@@ -19,6 +19,7 @@ import traceback
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from deploy.iblsdsc import OneSdsc as ONE
@@ -92,6 +93,15 @@ def compress_pid(pid, overwrite=False):
         shutil.copy2(cadzow_archive, cadzow_scratch)
         print(f'{pid[:8]} Cadzow: seeded from ceph archive', flush=True)
 
+    # Bad-channel labels precomputed by detect_bad_channels.py.  detect_bad_channels_cbin
+    # only runs inside compress_bin_to_h5 when there is no Cadzow checkpoint, so on a
+    # checkpoint-seeded rerun the labels would otherwise be lost.  Feeding the saved array
+    # in makes the `labels` attr appear in every archive, checkpoint or not.
+    labels_file = out_dir.joinpath('channel_labels.npy')
+    channel_labels = np.load(labels_file) if labels_file.exists() else None
+    if channel_labels is None:
+        print(f'{pid[:8]} channel_labels.npy missing — run detect_bad_channels.py first', flush=True)
+
     out_dir.joinpath(f'{pid}_compress.error').unlink(missing_ok=True)
     try:
         one = ONE()
@@ -110,6 +120,7 @@ def compress_pid(pid, overwrite=False):
                 q=Q,
                 cadzow_checkpoint_file=cadzow_scratch,
                 cadzow_kwargs=CADZOW_KWARGS,
+                channel_labels=channel_labels,
                 n_jobs=N_INNER,
                 **params,
             )
