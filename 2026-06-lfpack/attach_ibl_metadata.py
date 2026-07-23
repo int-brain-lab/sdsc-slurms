@@ -12,12 +12,15 @@ ceph.  Consolidates two previously separate passes:
 2. **Sync** — the sample→time affine written to every scale's meta as ``fs_sync`` /
    ``t0_sync``, fitted from the probe sync pulses (QC: max residual < 1 ms).
 
-**Geometry sanity check.**  Before writing channel annotations, the on-probe coordinates
-of the metadata source (``lateral_um`` / ``axial_um``, µm) are compared channel-by-channel
-against the geometry already stored in the archive (``geometry_x`` / ``geometry_y``).  A
-mismatch means the source channel order does not line up with the archive, so the brain
-locations would be misassigned — those PIDs are reported and their channel annotations are
-skipped (sync is still attached, as it does not depend on channel order).
+**Position-based join.**  Channel annotations are placed onto the archive's channels by
+**exact electrode position**, not by row order: the source coords (``lateral_um`` /
+``axial_um``, µm) and the archive geometry (``geometry_x`` / ``geometry_y``) describe the same
+electrodes but may use a different coordinate origin and channel order, and the source may be
+missing channels (rows dropped from the features parquet).  ``join_channels_to_archive``
+reconciles the origin with one integer translation and matches each archive channel to its
+source electrode exactly; source-dropped channels are filled with void.  If almost nothing
+matches the source is the wrong probe — that PID is reported and channels are skipped (sync is
+still attached, as it does not depend on channel order).
 
 Metadata is written into every ``*compressed*.h5`` found under ``--local-root`` (default and
 aggressive, BWM and full-atlas), for whichever recordings each archive contains.
@@ -45,7 +48,8 @@ PROJECT = "ea_active"
 LFP_AP_RESAMPLE_FACTOR = 12
 LFP_RESAMPLE_FACTOR = 10
 SYNC_MAX_RESIDUAL_S = 1e-3  # QC threshold on the sample→time linear fit
-GEOM_TOL_UM = 1.0           # per-channel tolerance for the probe-geometry sanity check
+GEOM_MIN_MATCH = 0.5        # below this exact-match fraction the source is the wrong probe (skip);
+                            # above it, unmatched archive channels are just dropped-source channels
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
@@ -116,20 +120,61 @@ def compute_sync(ssl):
     return float(intercept), float(1.0 / slope), max_residual_s < SYNC_MAX_RESIDUAL_S, max_residual_s
 
 
-def geometry_matches(meta, lateral_um, axial_um):
-    """Check the source on-probe coords against the archive's stored geometry (µm).
+def join_channels_to_archive(meta, channels):
+    """Map source channel annotations onto the archive's channel order by electrode position.
 
-    Returns (ok, detail). ok is False on channel-count or coordinate mismatch. When the
-    source carries no probe coords the check is skipped (ok=True, detail notes it).
+    The archive geometry (``geometry_from_meta``, Reader-sorted order) and the source coords
+    (features / SpikeSortingLoader) describe the same electrodes but may use a different
+    coordinate origin and channel order, and the source may be *missing channels* (rows
+    dropped from the features parquet).  So annotations cannot be copied by row position.
+
+    Electrode positions lie on an exact integer-µm lattice, so we reconcile the origin with a
+    single integer translation (per-axis median difference) and then match archive→source by
+    **exact position** (a hash lookup, no distance tolerance).  A high exact-match rate itself
+    proves the translation is right.  Unmatched archive channels (source-dropped) are filled
+    with void (``atlas_id=0``, ``acronym="void"``, ``ml/ap/dv=nan``).
+
+    Returns
+    -------
+    (annot, detail) : (dict or None, str)
+        ``annot`` holds ``ml``/``ap``/``dv``/``atlas_id``/``acronym`` arrays in archive-channel
+        order, or None when too few channels match (wrong source probe → caller skips).
     """
-    gx = np.asarray(meta.attrs["geometry_x"], np.float32)
-    gy = np.asarray(meta.attrs["geometry_y"], np.float32)
-    if lateral_um is None or axial_um is None:
-        return True, "no source probe coords — geometry check skipped"
-    if len(lateral_um) != len(gx):
-        return False, f"channel count {len(lateral_um)} != archive {len(gx)}"
-    dmax = float(np.max(np.abs(np.c_[lateral_um - gx, axial_um - gy])))
-    return dmax <= GEOM_TOL_UM, f"max |Δ| = {dmax:.2f} µm"
+    gx = np.round(np.asarray(meta.attrs["geometry_x"], float)).astype(int)
+    gy = np.round(np.asarray(meta.attrs["geometry_y"], float)).astype(int)
+    nc = len(gx)
+    sxu, syu = channels.get("lateral_um"), channels.get("axial_um")
+    if sxu is None or syu is None:
+        return None, "no source probe coords"
+    sx = np.round(np.asarray(sxu, float)).astype(int)
+    sy = np.round(np.asarray(syu, float)).astype(int)
+
+    # Reconcile the coordinate-origin convention with one integer translation.
+    ox = int(round(np.median(gx) - np.median(sx)))
+    oy = int(round(np.median(gy) - np.median(sy)))
+    src_by_pos = {(int(sx[j] + ox), int(sy[j] + oy)): j for j in range(len(sx))}
+    idx = np.array([src_by_pos.get((int(gx[i]), int(gy[i])), -1) for i in range(nc)])
+    matched = idx >= 0
+    rate = float(matched.mean())
+    if rate < GEOM_MIN_MATCH:
+        return None, f"only {rate:.0%} channels matched exactly (offset={ox},{oy})"
+
+    isrc = np.where(matched, idx, 0)
+
+    def gather(key, fill, dtype):
+        v = np.asarray(channels[key])[isrc]
+        return np.where(matched, v, fill).astype(dtype)
+
+    acr = np.asarray(channels["acronym"], dtype=object)[isrc]
+    annot = dict(
+        ml=gather("ml", np.nan, np.float32),
+        ap=gather("ap", np.nan, np.float32),
+        dv=gather("dv", np.nan, np.float32),
+        atlas_id=gather("atlas_id", 0, np.int32),
+        acronym=[str(acr[i]) if matched[i] else "void" for i in range(nc)],
+    )
+    n_un = int((~matched).sum())
+    return annot, f"exact-matched {rate:.0%}" + (f", {n_un} source-dropped→void" if n_un else "")
 
 
 def main():
@@ -174,11 +219,11 @@ def main():
                 meta0 = f[f"{pid}/00/meta"]
                 fs_base = float(meta0.attrs["fs"])
 
-                # ── channels (scale 00) with geometry sanity check ──────────────
+                # ── channels (scale 00): exact position join, drop-tolerant ─────
                 if channels is not None:
-                    ok, detail = geometry_matches(meta0, channels["lateral_um"], channels["axial_um"])
-                    if not ok:
-                        log.warning(f"  {pid} [{h5file.name}]: GEOMETRY MISMATCH ({detail}) — skipping channels")
+                    annot, detail = join_channels_to_archive(meta0, channels)
+                    if annot is None:
+                        log.warning(f"  {pid} [{h5file.name}]: geometry join failed ({detail}) — skipping channels")
                         if pid not in geom_mismatch:
                             geom_mismatch.append(pid)
                     elif not args.dry_run:
@@ -188,11 +233,11 @@ def main():
                         # unchanged so a future edit here can never silently clobber it.
                         had_labels = "labels" in meta0.attrs
                         labels_before = meta0.attrs["labels"][:] if had_labels else None
-                        meta0.attrs["ml"] = channels["ml"]
-                        meta0.attrs["ap"] = channels["ap"]
-                        meta0.attrs["dv"] = channels["dv"]
-                        meta0.attrs["atlas_id"] = channels["atlas_id"]
-                        meta0.attrs["acronym"] = channels["acronym"]
+                        meta0.attrs["ml"] = annot["ml"]
+                        meta0.attrs["ap"] = annot["ap"]
+                        meta0.attrs["dv"] = annot["dv"]
+                        meta0.attrs["atlas_id"] = annot["atlas_id"]
+                        meta0.attrs["acronym"] = annot["acronym"]
                         if had_labels:
                             assert np.array_equal(meta0.attrs["labels"][:], labels_before), (
                                 f"{pid} [{h5file.name}]: bad-channel labels changed while "
