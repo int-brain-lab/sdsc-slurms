@@ -72,8 +72,9 @@ def detect_pid(pid, overwrite=False):
         sr = ssl.raw_electrophysiology(band='lf', stream=False)
         labels, _ = detect_bad_channels_cbin(sr, return_features=True)
         labels = labels.astype(np.int8)
-        # atomic write so a hard kill never leaves a truncated sentinel
-        tmp = labels_file.with_suffix('.npytmp')
+        # atomic write so a hard kill never leaves a truncated sentinel.  The temp name
+        # must end in .npy — np.save appends .npy to any other name, breaking the rename.
+        tmp = out_dir.joinpath('channel_labels.tmp.npy')
         np.save(tmp, labels)
         tmp.rename(labels_file)
         c = _counts(pid, labels)
