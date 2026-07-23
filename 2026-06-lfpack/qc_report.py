@@ -102,11 +102,13 @@ def scan_archive(h5file):
             cr_total, cr_svd, cr_wp, rmse = [], [], [], []
             for ci in sorted(cg.keys(), key=int):
                 a = cg[ci].attrs
+                # The chunk `rmse` attr is in data units (volts); the report presents
+                # RMSE in µV throughout (axis labels, 25 µV target), so convert here.
                 row = dict(
                     pid=pid, pass_=pass_name, subset=subset, chunk=int(ci),
                     ns_original=int(a["ns_original"]),
                     cr_total=float(a["cr_total"]), cr_svd=float(a["cr_svd"]),
-                    cr_wp=float(a["cr_wp"]), rmse=float(a["rmse"]),
+                    cr_wp=float(a["cr_wp"]), rmse=float(a["rmse"]) * 1e6,
                 )
                 per_chunk.append(row)
                 cr_total.append(row["cr_total"])
@@ -173,15 +175,15 @@ def make_figures(df_pid, df_chunk, fig_dir):
     save(fig, "bad_channels")
 
     fig, ax = plt.subplots(1, 2, figsize=(11, 4))
-    sns.histplot(df_pid, x="cr_total_mean", hue="pass_", bins=40, ax=ax[0], element="step")
+    sns.histplot(df_pid, x="cr_total_mean", hue="pass", bins=40, ax=ax[0], element="step")
     ax[0].set(xlabel="mean compression ratio", ylabel="PIDs", title="Compression ratio per PID")
-    sns.histplot(df_pid, x="rmse_median", hue="pass_", bins=40, ax=ax[1], element="step")
+    sns.histplot(df_pid, x="rmse_median", hue="pass", bins=40, ax=ax[1], element="step")
     ax[1].axvline(25, color="k", ls="--", lw=1, label="25 µV target")
     ax[1].set(xlabel="median RMSE [µV]", ylabel="PIDs", title="Reconstruction RMSE per PID")
     save(fig, "compression")
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    sns.scatterplot(df_pid, x="cr_total_mean", y="rmse_median", hue="pass_", s=12, alpha=0.5, ax=ax)
+    sns.scatterplot(df_pid, x="cr_total_mean", y="rmse_median", hue="pass", s=12, alpha=0.5, ax=ax)
     ax.axhline(25, color="k", ls="--", lw=1)
     ax.set(xlabel="mean compression ratio", ylabel="median RMSE [µV]",
            title="Compression ratio vs RMSE")
