@@ -223,8 +223,100 @@ def build_design(pid: str, eid: str, source: str, one) -> design_mod.Design:
     )
 
 
+# Saturated-sample row exclusion --------------------------------------------------
+# No padding by default: a real-trace check (RMS around saturation edges, plus an
+# end-to-end fit/lambda comparison across 0s/7-sample/6.656s margins on PID
+# 1a276285-8b0e-4cc9-9f0a-a3a002978724) found no measurable filter-transient leakage
+# past the stored interval, while padding costs fold-balance for no benefit.
+SATURATION_MARGIN_S = 0.0
+
+# Well-posedness floor for a single CV fold after row exclusion: below this, a fold's
+# Sxx is too thin relative to the design's column count for a trustworthy ridge solve.
+# design.n_cols is ~90 (9 base regressors x 10 basis functions) for this project, so
+# this floor (~2000 samples = 8 s at 250 Hz) is generous, not tight -- it exists only
+# to catch the pathological case of a fold's window landing almost entirely inside a
+# padded saturated span, not to police ordinary fold-to-fold imbalance.
+MIN_VALID_PER_FOLD = 2000
+
+
+def saturation_valid_mask(
+    pid: str, tvec: np.ndarray, source: str, margin_s: float = SATURATION_MARGIN_S
+) -> np.ndarray:
+    """Boolean row mask over ``tvec`` excluding saturated LFP spans (+ padding).
+
+    Reads the saturation table from ``source``'s own grid archive (via
+    :func:`_grid_source`, same as :func:`build_design`) -- verified scale-independent
+    (identical across default/aggressive for a given PID), so this is just reusing
+    whichever archive this run already requires, not a new dependency (e.g. a
+    standalone ``aggressive`` run never needs the ``default`` archive downloaded).
+    Each stored interval is expanded by ``margin_s`` on both sides before exclusion,
+    since the stored boundaries are an approximate detection (see
+    :data:`SATURATION_MARGIN_S`).
+
+    Parameters
+    ----------
+    pid : str
+        Probe insertion UUID.
+    tvec : ndarray, shape (n_samples,)
+        Session-clock sample times (``Design.tvec``).
+    source : str
+        LFP source being fit (``"default"``, ``"aggressive"`` or ``"uncompressed"``).
+    margin_s : float, default :data:`SATURATION_MARGIN_S`
+        Padding applied to each side of every stored saturation interval. Pass ``0.0``
+        to exclude only the stored interval itself (no padding).
+
+    Returns
+    -------
+    ndarray of bool, shape (n_samples,)
+        ``True`` = keep, ``False`` = excluded (saturated span + margin).
+    """
+    io.LFP_H5 = compressed_h5(_grid_source(source))
+    reader = io.open_lfp(pid)
+    try:
+        sat = reader.saturation_times()
+    finally:
+        reader.close()
+
+    valid = np.ones(tvec.shape[0], dtype=bool)
+    if sat.empty:
+        return valid
+    starts = sat["start_time"].to_numpy() - margin_s
+    stops = sat["stop_time"].to_numpy() + margin_s
+    lo = np.searchsorted(tvec, starts, side="left")
+    hi = np.searchsorted(tvec, stops, side="right")
+    for a, b in zip(lo, hi):
+        valid[a:b] = False
+    return valid
+
+
+def check_fold_coverage(valid: np.ndarray, n_folds: int, min_valid: int = MIN_VALID_PER_FOLD) -> None:
+    """Raise if any contiguous CV fold would retain too few valid rows.
+
+    Uses the same fold-edge convention as :func:`solve.accumulate_folds`
+    (``np.linspace`` over the sample range) so this reflects the actual folds the fit
+    will use. A big saturated span landing mostly inside one fold's window is exactly
+    the scenario that can leave a fold too thin for a well-posed ridge solve -- this is
+    the QC gate for that failure mode (analogous to ``design.MIN_CONTINUOUS_COVERAGE``
+    gating wheel/pupil), distinct from ordinary fold-to-fold imbalance, which
+    ``_cv_r2``/``_r2`` already handle generically via each accumulator's own ``n``.
+
+    Raises
+    ------
+    ValueError
+        If any fold's valid-row count is below ``min_valid``.
+    """
+    edges = np.linspace(0, valid.shape[0], n_folds + 1).astype(int)
+    counts = [int(valid[edges[f]:edges[f + 1]].sum()) for f in range(n_folds)]
+    if min(counts) < min_valid:
+        raise ValueError(
+            f"fold too thin after saturation exclusion: per-fold valid counts {counts}, "
+            f"min {min_valid} required"
+        )
+
+
 def fit_pid(pid: str, outdir: Path, source: str, n_perm: int, n_folds: int,
-            overwrite: bool, stagger: float = 0.0, lambda_mode: str = "per-band") -> dict:
+            overwrite: bool, stagger: float = 0.0, lambda_mode: str = "per-band",
+            saturation_margin_s: float | None = SATURATION_MARGIN_S) -> dict:
     """Fit and persist both target families (band, raw) for one PID and source.
 
     Returns a small status dict; large arrays are written to disk and freed here.
@@ -243,6 +335,11 @@ def fit_pid(pid: str, outdir: Path, source: str, n_perm: int, n_folds: int,
         ``"pooled"`` is the original behaviour (``select_lambda``/
         ``solve_encoding``), kept for direct A/B comparison against the
         already-archived ``results_bwm_cluster`` runs.
+    saturation_margin_s : float or None, default :data:`SATURATION_MARGIN_S`
+        Padding (seconds) applied on each side of every stored saturation interval
+        before excluding those rows from the fit (see :func:`saturation_valid_mask`).
+        ``None`` disables row exclusion entirely (pre-exclusion behaviour, every
+        sample kept) -- exposed for A/B comparison against different margins.
     """
     # resume only when *both* families are on disk: band is saved before raw, so a
     # PID interrupted between the two would otherwise be skipped with raw missing.
@@ -253,17 +350,22 @@ def fit_pid(pid: str, outdir: Path, source: str, n_perm: int, n_folds: int,
         one = _make_one(stagger)
         eid, _ = one.pid2eid(pid)
         dsg = build_design(pid, eid, source, one)
+        if saturation_margin_s is None:
+            valid = None
+        else:
+            valid = saturation_valid_mask(pid, dsg.tvec, source, margin_s=saturation_margin_s)
+            check_fold_coverage(valid, n_folds)
         for kind in ("band", "raw"):
             tgt = make_targets_for(pid, source, kind)
             if lambda_mode == "per-band":
                 groups = tgt.target_meta["band"].to_numpy()
-                lam, _ = solve_mod.select_lambda_robust(dsg, tgt, LAMBDAS, groups=groups, n_folds=n_folds)
-                res = solve_mod.solve_encoding_grouped(dsg, tgt, lam, groups, n_folds=n_folds)
-                null = solve_mod.permutation_null_r2_grouped(dsg, tgt, lam, groups, n_perm=n_perm, n_folds=n_folds)
+                lam, _ = solve_mod.select_lambda_robust(dsg, tgt, LAMBDAS, groups=groups, n_folds=n_folds, valid=valid)
+                res = solve_mod.solve_encoding_grouped(dsg, tgt, lam, groups, n_folds=n_folds, valid=valid)
+                null = solve_mod.permutation_null_r2_grouped(dsg, tgt, lam, groups, n_perm=n_perm, n_folds=n_folds, valid=valid)
             else:
-                lam, _ = solve_mod.select_lambda(dsg, tgt, LAMBDAS, n_folds=n_folds)
-                res = solve_mod.solve_encoding(dsg, tgt, lam=lam, n_folds=n_folds)
-                null = solve_mod.permutation_null_r2(dsg, tgt, n_perm=n_perm, lam=lam, n_folds=n_folds)
+                lam, _ = solve_mod.select_lambda(dsg, tgt, LAMBDAS, n_folds=n_folds, valid=valid)
+                res = solve_mod.solve_encoding(dsg, tgt, lam=lam, n_folds=n_folds, valid=valid)
+                null = solve_mod.permutation_null_r2(dsg, tgt, n_perm=n_perm, lam=lam, n_folds=n_folds, valid=valid)
             rio.save_pid_result(res, outdir, null=null)
             del tgt, res, null
         return {"pid": pid, "status": "ok"}
@@ -290,7 +392,13 @@ def main() -> None:
                         help="per-band (default): separate lambda per band, fixes the pooled-median "
                              "collapse (see PLAN.md); pooled: original one-lambda-for-everything "
                              "behaviour, for A/B comparison against results_bwm_cluster")
+    parser.add_argument("--saturation-margin-s", type=float, default=SATURATION_MARGIN_S,
+                        help="padding (s) around each stored saturation interval before excluding "
+                             "those rows from the fit (default: 0.0, no padding -- see "
+                             "SATURATION_MARGIN_S). Pass a negative value to disable row exclusion "
+                             "entirely (pre-exclusion behaviour, every sample kept).")
     args = parser.parse_args()
+    saturation_margin_s = None if args.saturation_margin_s < 0 else args.saturation_margin_s
 
     # one-time pre-submit download of the consolidated archive(s) this source reads.
     # The uncompressed tier still needs the default archive for its grid + channel meta.
@@ -326,11 +434,12 @@ def main() -> None:
         one = _make_one()
         eid, _ = one.pid2eid(mine[0])
         rio.save_shared(build_design(mine[0], eid, args.lfp_source, one), outdir, targets_mod.BANDS,
-                         extra={"lambda_mode": args.lambda_mode, "lambdas": LAMBDAS.tolist()})
+                         extra={"lambda_mode": args.lambda_mode, "lambdas": LAMBDAS.tolist(),
+                                "saturation_margin_s": saturation_margin_s})
 
     results = joblib.Parallel(n_jobs=args.workers, backend="loky")(
         joblib.delayed(fit_pid)(pid, outdir, args.lfp_source, args.n_perm, args.n_folds,
-                                args.overwrite, args.stagger, args.lambda_mode)
+                                args.overwrite, args.stagger, args.lambda_mode, saturation_margin_s)
         for pid in mine
     )
     ok = sum(r["status"] == "ok" for r in results)

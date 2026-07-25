@@ -72,8 +72,8 @@ derives them straight from the concatenated `stpc.npy` arrays (see `compute_coup
 ### Aggregate — reduce all PIDs into one set of tables
 Run once cells-step (and, if wanted, stlfp/stpc) are done for all PIDs:
 ```bash
-python aggregate.py
-srun -p genx --cpus-per-task=8 --mem=256G /mnt/home/owinter/Documents/ephys-atlas/.venv/bin/python -u /mnt/home/owinter/Documents/sdsc-slurms/2026-03_EA_Cells/aggregate.py
+srun -p genx --ntasks=1 --cpus-per-task=4 --mem=300G --time=1:00:00 --pty \
+  /mnt/home/owinter/Documents/ephys-atlas/.venv/bin/python -u aggregate.py
 ```
 See the docstring at the top of `aggregate.py` for the full list of output files/shapes.
 `clusters.acgs_3d.npy` is only written if every `{pid}.h5` has an `acgs_3d` dataset

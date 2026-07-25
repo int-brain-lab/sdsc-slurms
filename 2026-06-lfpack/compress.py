@@ -18,6 +18,7 @@ import time
 import traceback
 from pathlib import Path
 
+import h5py
 import joblib
 import numpy as np
 import pandas as pd
@@ -45,6 +46,29 @@ SCRATCH_ROOT = Path(os.environ.get('SCRATCH_ROOT', '/tmp/lfpack_local'))
 OUTPUT_ROOT  = Path(os.environ.get('OUTPUT_ROOT', '/mnt/home/owinter/ceph/ea/denoised_lfp'))
 TABLES_DIR   = Path('/mnt/home/owinter/Documents/cache_tables/one_cache-ibl_neuropixel_brainwide_01')
 FILE_INSERTIONS = TABLES_DIR.parent.joinpath('df_probe_details_ibl_neuropixel_brainwide_01.pqt')
+
+
+def _fix_muted_attr(h5_file):
+    """Force the saturation table's ``muted`` attr to True.
+
+    ``compress_bin_to_h5`` sets ``muted = not checkpoint_existed`` — an honest
+    self-report of whether *this call* ran the mute step. That undercounts here:
+    ``compress_pid`` always deletes a stale pre-mute-fix Cadzow checkpoint on
+    ``--overwrite`` (see the comment above ``cadzow_archive.unlink()``), so any
+    checkpoint this driver reuses is guaranteed to already carry the late
+    post-Cadzow re-mute. Resumed runs would otherwise report ``muted=False``
+    despite the data being correctly muted.
+
+    Parameters
+    ----------
+    h5_file : path-like
+        Single-recording HDF5 file just written by ``compress_bin_to_h5``.
+    """
+    with h5py.File(h5_file, "r+") as f:
+        recording = next(iter(f.keys()))
+        key = f"{recording}/saturation"
+        if key in f:
+            f[key].attrs["muted"] = True
 
 
 def compress_pid(pid, overwrite=False):
@@ -124,6 +148,7 @@ def compress_pid(pid, overwrite=False):
                 n_jobs=N_INNER,
                 **params,
             )
+            _fix_muted_attr(h5tmp)
             h5tmp.rename(files[lbl])  # atomic: sentinel only appears on success
             print(f'{pid[:8]} {lbl}: done in {time.perf_counter() - t0:.1f} s', flush=True)
 

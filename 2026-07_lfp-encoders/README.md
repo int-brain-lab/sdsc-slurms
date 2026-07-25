@@ -61,14 +61,18 @@ and will get OOM-killed on a login node. Download the archive first (see Setup).
 instead of one pooled lambda for all ~288 targets) — see "Lambda fitting" below before
 resweeping; pass `--lambda-mode pooled` to reproduce the original `results_bwm_cluster`
 behaviour exactly.
+Set once per run, reused by every command below (Run/Check progress/Archive):
+```bash
+OUTDIR=~/ceph/lfp-encoders/results_bwm_v01_smart
+```
 ```bash
 # fast smoke: few PIDs, cheap null — validates the whole path (design→targets→solve→save)
 sbatch encode.sbatch --lfp-source default --limit 4 --workers 4 --n-perm 2 --stagger 2
 # full run per source (single node as configured; widen --array in the sbatch to stripe across nodes)
-# --outdir: point at a NEW directory, don't overwrite the archived results_bwm_cluster run
-sbatch encode.sbatch --lfp-source default --outdir ~/ceph/lfp-encoders/results_bwm
-sbatch encode.sbatch --lfp-source aggressive --outdir ~/ceph/lfp-encoders/results_bwm
-sbatch encode.sbatch --lfp-source uncompressed --outdir ~/ceph/lfp-encoders/results_bwm
+# --outdir: point at a NEW directory, don't overwrite an already-archived run
+sbatch encode.sbatch --lfp-source default --outdir "$OUTDIR"
+sbatch encode.sbatch --lfp-source aggressive --outdir "$OUTDIR"
+sbatch encode.sbatch --lfp-source uncompressed --outdir "$OUTDIR"
 ```
 Resumable: PIDs with **both** `<pid>_band.parquet` and `<pid>_raw.parquet` under the
 source's outdir are skipped (a PID interrupted mid-fit re-runs).
@@ -76,12 +80,13 @@ source's outdir are skipped (a PID interrupted mid-fit re-runs).
 point `--outdir` elsewhere for the smoke.)
 
 ## Check progress
+A single lfp-source encoding run should take around 6h30 to 6h45 on a full node and 221 Gb memory.
 
 ```bash
 squeue -u $USER   # empty = nothing still queued/running
 for s in default aggressive uncompressed; do
-  b=$(ls ~/ceph/lfp-encoders/results_bwm/$s/scores/*_band.parquet 2>/dev/null | wc -l)
-  r=$(ls ~/ceph/lfp-encoders/results_bwm/$s/scores/*_raw.parquet 2>/dev/null | wc -l)
+  b=$(ls "$OUTDIR/$s/scores/"*_band.parquet 2>/dev/null | wc -l)
+  r=$(ls "$OUTDIR/$s/scores/"*_raw.parquet 2>/dev/null | wc -l)
   echo "$s: band=$b raw=$r"
 done
 ```
@@ -95,12 +100,13 @@ uncompressed: band=699 raw=699
 ## Archive for transfer
 
 ```bash
-cd ~/ceph/lfp-encoders
-tar czf results_bwm_$(date +%F).tar.gz results_bwm/
+cd "$(dirname "$OUTDIR")"
+tar czf "$(basename "$OUTDIR").tar.gz" "$(basename "$OUTDIR")/"
 ```
-Then from the laptop:
+Then from the laptop (use the archive name printed above):
 ```bash
-rsync --progress -av -e ssh popeye:~/ceph/lfp-encoders/results_bwm_2026-07-07.tar.gz ./
+cd /Users/olivier/Documents/datadisk/lfp-processing/lfp-encoders
+rsync --progress -av -e ssh popeye:~/ceph/lfp-encoders/results_bwm_v01_smart.tar.gz ./
 ```
 
 ## Lambda fitting
@@ -124,10 +130,23 @@ reconnecting per PID), and its first connection is jittered by up to `--stagger`
 (default 30) so the workers don't all hit alyx at job start. Lower it for a quick smoke
 test; raise it if you fan out across more nodes.
 
+## Saturation row exclusion
+Saturated (ADC-clipped) LFP spans are excluded from the fit entirely (both training and
+CV scoring) rather than trusted as muted-to-zero data -- fixes the `uncompressed`-tier
+collapse regression seen in `v01` (a CV fold landing on a muted span has near-zero
+target variance, so R² swings hugely negative; see `index.qmd` "Result 6"). The mask is
+built once per PID from that source's own saturation table (`--saturation-margin-s`,
+default `0.0` -- real-trace validation found no benefit from padding beyond the stored
+interval, see `encode.SATURATION_MARGIN_S`) and applied identically to both target
+kinds. A PID/source whose row exclusion leaves a CV fold too thin (`encode.
+MIN_VALID_PER_FOLD`) errors out for that PID rather than fitting on a degenerate fold --
+same per-PID try/except as any other fit error, so it doesn't stop the batch.
+
 ## Outputs (under `OUTPUT_ROOT/<source>/`)
 `basis.npz`, `model_config.json`, per-PID `scores/<pid>_<kind>.parquet` +
-`kernels/<pid>_<kind>.npz`. Scores carry `has_wheel`/`has_pupil` flags and per-group
-drop-R². The three source dirs are directly comparable (identical design). Pool with
+`kernels/<pid>_<kind>.npz`. Scores carry `has_wheel`/`has_pupil` flags, `n_valid` (rows
+actually used after saturation exclusion) and per-group drop-R². The three source dirs
+are directly comparable (identical design). Pool with
 `results_io.load_scores(OUTPUT_ROOT/<source>)`.
 
 ## Model (locked)

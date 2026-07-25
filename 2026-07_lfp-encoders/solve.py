@@ -85,7 +85,9 @@ def _mask_targets(acc: Accumulator, mask: np.ndarray) -> Accumulator:
     return Accumulator(acc.n, acc.xsum, acc.ysum[mask], acc.ysq[mask], acc.xtx, acc.xty[:, mask])
 
 
-def accumulate_folds(design: Design, targets: Targets, n_folds: int, chunk_samples: int) -> list[Accumulator]:
+def accumulate_folds(
+    design: Design, targets: Targets, n_folds: int, chunk_samples: int, valid: np.ndarray | None = None,
+) -> list[Accumulator]:
     """Stream the recording once into one accumulator per contiguous time-fold.
 
     Parameters
@@ -98,6 +100,12 @@ def accumulate_folds(design: Design, targets: Targets, n_folds: int, chunk_sampl
         Number of contiguous cross-validation folds.
     chunk_samples : int
         Interior chunk length streamed at a time.
+    valid : ndarray of bool, shape (design.n_samples,), optional
+        Row mask (e.g. excluding saturated LFP spans). ``True`` samples are folded
+        into the sufficient statistics as usual; ``False`` samples are dropped from
+        every accumulator entirely -- both from training (the fit's ``Sxx``/``Sxy``)
+        and from held-out CV scoring, since both read off the same accumulators.
+        ``None`` (default) keeps every sample, matching the pre-exclusion behaviour.
 
     Returns
     -------
@@ -113,7 +121,11 @@ def accumulate_folds(design: Design, targets: Targets, n_folds: int, chunk_sampl
         acc = Accumulator.zeros(p, m)
         for a in range(edges[f], edges[f + 1], chunk_samples):
             b = min(a + chunk_samples, edges[f + 1])
-            acc.add_chunk(design.expand_range(a, b), targets.Y[a:b])
+            X, Y = design.expand_range(a, b), targets.Y[a:b]
+            if valid is not None:
+                keep = valid[a:b]
+                X, Y = X[keep], Y[keep]
+            acc.add_chunk(X, Y)
         accs.append(acc)
     return accs
 
@@ -216,6 +228,10 @@ class EncodingResult:
     # target_meta["band"] unambiguously -- kept as a separate field rather than
     # overloading `lam` so the two dict meanings can never be confused.
     lam_by_group: dict[object, float] | None = None
+    # Total rows folded into the full-data fit (design.n_samples when `valid=None`;
+    # fewer when a row mask excludes e.g. saturated LFP spans) -- a cheap per-PID QC
+    # signal for how much data a fit was actually based on.
+    n_valid: int = 0
 
 
 def _cv_r2(accs: list[Accumulator], design: Design, lam, keep: np.ndarray | None = None) -> np.ndarray:
@@ -253,6 +269,7 @@ def solve_encoding(
     lam: float | dict[str, float] = 1.0,
     n_folds: int = 5,
     chunk_samples: int = 250 * 300,
+    valid: np.ndarray | None = None,
 ) -> EncodingResult:
     """Fit the encoding model and score it out-of-core.
 
@@ -268,6 +285,9 @@ def solve_encoding(
         Contiguous cross-validation folds.
     chunk_samples : int, default 75000
         Streaming chunk length (~300 s at 250 Hz).
+    valid : ndarray of bool, shape (design.n_samples,), optional
+        Row mask forwarded to :func:`accumulate_folds` (e.g. excluding saturated
+        LFP spans); ``None`` keeps every sample.
 
     Returns
     -------
@@ -275,7 +295,7 @@ def solve_encoding(
         Full-data weights/kernels plus in-sample and cross-validated R² and
         per-group drop-R².
     """
-    accs = accumulate_folds(design, targets, n_folds, chunk_samples)
+    accs = accumulate_folds(design, targets, n_folds, chunk_samples, valid=valid)
     total = _sum(accs)
     P = build_penalty(design, lam)
 
@@ -295,7 +315,7 @@ def solve_encoding(
         pid=design.pid, kind=targets.kind, lam=lam, n_folds=n_folds,
         W=W, intercept=a, kernels=_kernels(design, W), taus=design.taus,
         r2_full=r2_full, r2_cv=r2_cv, dr2=dr2, target_meta=targets.target_meta,
-        base_names=design.base_names, groups=design.groups,
+        base_names=design.base_names, groups=design.groups, n_valid=total.n,
     )
 
 
@@ -306,6 +326,7 @@ def solve_encoding_grouped(
     target_groups: np.ndarray,
     n_folds: int = 5,
     chunk_samples: int = 250 * 300,
+    valid: np.ndarray | None = None,
 ) -> EncodingResult:
     """Fit the encoding model with a separate lambda per *target* group (e.g. band).
 
@@ -337,6 +358,8 @@ def solve_encoding_grouped(
         ``targets.target_meta["band"].to_numpy()``). Every target must
         belong to a group present in ``lam_by_group``.
     n_folds, chunk_samples : see :func:`solve_encoding`.
+    valid : ndarray of bool, shape (design.n_samples,), optional
+        Row mask forwarded to :func:`accumulate_folds`.
 
     Returns
     -------
@@ -351,7 +374,7 @@ def solve_encoding_grouped(
     if not set(np.unique(target_groups)) <= set(lam_by_group):
         raise ValueError("every target group must have a lambda in lam_by_group")
 
-    accs = accumulate_folds(design, targets, n_folds, chunk_samples)
+    accs = accumulate_folds(design, targets, n_folds, chunk_samples, valid=valid)
     total = _sum(accs)
 
     n_targets = targets.n_targets
@@ -384,6 +407,7 @@ def solve_encoding_grouped(
         W=W, intercept=a, kernels=_kernels(design, W), taus=design.taus,
         r2_full=r2_full, r2_cv=r2_cv, dr2=dr2, target_meta=targets.target_meta,
         base_names=design.base_names, groups=design.groups, lam_by_group=lam_by_group,
+        n_valid=total.n,
     )
 
 
@@ -395,6 +419,7 @@ def permutation_null_r2(
     n_folds: int = 5,
     seed: int = 0,
     chunk_samples: int = 250 * 300,
+    valid: np.ndarray | None = None,
 ) -> np.ndarray:
     """Circular-shift null distribution of cross-validated R² per target.
 
@@ -415,6 +440,12 @@ def permutation_null_r2(
     lam, n_folds, chunk_samples : see :func:`solve_encoding`.
     seed : int
         Seed for the shift offsets.
+    valid : ndarray of bool, shape (design.n_samples,), optional
+        Row mask forwarded to :func:`accumulate_folds`. Lives on ``targets.Y``'s
+        (saturation) timeline and must **not** be rolled along with ``design.base``
+        -- the same (unshifted) mask is reused for every shifted null draw as for
+        the real fit, so the null excludes the same corrupted rows without
+        introducing its own alignment artefact.
 
     Returns
     -------
@@ -429,7 +460,7 @@ def permutation_null_r2(
     for i in range(n_perm):
         shift = int(rng.integers(margin, n - margin))
         shifted = replace(design, base=np.roll(design.base, shift, axis=0))
-        accs = accumulate_folds(shifted, targets, n_folds, chunk_samples)
+        accs = accumulate_folds(shifted, targets, n_folds, chunk_samples, valid=valid)
         null[i] = _cv_r2(accs, shifted, lam)
     return null
 
@@ -443,6 +474,7 @@ def permutation_null_r2_grouped(
     n_folds: int = 5,
     seed: int = 0,
     chunk_samples: int = 250 * 300,
+    valid: np.ndarray | None = None,
 ) -> np.ndarray:
     """:func:`permutation_null_r2`, but scoring each target group with its own lambda.
 
@@ -462,6 +494,9 @@ def permutation_null_r2_grouped(
     target_groups : ndarray, shape (n_targets,)
         Per-target group label matching ``lam_by_group``'s keys.
     n_perm, n_folds, seed, chunk_samples : see :func:`permutation_null_r2`.
+    valid : ndarray of bool, optional
+        Row mask forwarded to :func:`accumulate_folds`; see :func:`permutation_null_r2`
+        -- unshifted, reused as-is for every draw.
 
     Returns
     -------
@@ -475,7 +510,7 @@ def permutation_null_r2_grouped(
     for i in range(n_perm):
         shift = int(rng.integers(margin, n - margin))
         shifted = replace(design, base=np.roll(design.base, shift, axis=0))
-        accs = accumulate_folds(shifted, targets, n_folds, chunk_samples)
+        accs = accumulate_folds(shifted, targets, n_folds, chunk_samples, valid=valid)
         for g, lam in lam_by_group.items():
             mask = target_groups == g
             if not mask.any():
@@ -491,8 +526,14 @@ def select_lambda(
     lambdas: np.ndarray,
     n_folds: int = 5,
     chunk_samples: int = 250 * 300,
+    valid: np.ndarray | None = None,
 ) -> tuple[float, np.ndarray]:
     """Sweep a global ``lambda`` and pick the one with best median held-out R².
+
+    Parameters
+    ----------
+    valid : ndarray of bool, shape (design.n_samples,), optional
+        Row mask forwarded to :func:`accumulate_folds`.
 
     Returns
     -------
@@ -501,7 +542,7 @@ def select_lambda(
     curve : ndarray, shape (len(lambdas),)
         Median CV R² across targets for each lambda (for the diagnostic plot).
     """
-    accs = accumulate_folds(design, targets, n_folds, chunk_samples)
+    accs = accumulate_folds(design, targets, n_folds, chunk_samples, valid=valid)
     curve = np.array([np.median(_cv_r2(accs, design, float(lam))) for lam in lambdas])
     return float(lambdas[int(np.argmax(curve))]), curve
 
@@ -515,6 +556,7 @@ def select_lambda_robust(
     chunk_samples: int = 250 * 300,
     floor: float = -0.3,
     floor_quantile: float = 0.05,
+    valid: np.ndarray | None = None,
 ) -> tuple[float | dict[object, float], np.ndarray | dict[object, np.ndarray]]:
     """Sweep ``lambda`` like :func:`select_lambda`, but pick a tail-safe winner.
 
@@ -562,6 +604,8 @@ def select_lambda_robust(
         Worst-case-quantile CV R² a candidate lambda must clear per group.
     floor_quantile : float, default 0.05
         Quantile of the group's per-target CV R² checked against ``floor``.
+    valid : ndarray of bool, shape (design.n_samples,), optional
+        Row mask forwarded to :func:`accumulate_folds`.
 
     Returns
     -------
@@ -572,7 +616,7 @@ def select_lambda_robust(
         the diagnostic plot -- NOT the same scale as ``select_lambda``'s
         median curve (this one is a clipped mean).
     """
-    accs = accumulate_folds(design, targets, n_folds, chunk_samples)
+    accs = accumulate_folds(design, targets, n_folds, chunk_samples, valid=valid)
     all_r2 = np.stack([_cv_r2(accs, design, float(lam)) for lam in lambdas])  # (n_lambda, n_targets)
     return _pick_lambda_from_curve(all_r2, lambdas, groups, floor, floor_quantile)
 

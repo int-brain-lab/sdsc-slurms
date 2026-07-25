@@ -28,7 +28,7 @@ PY=/mnt/home/owinter/Documents/ephys-atlas/.venv/bin/python
 sbatch compress.sbatch
 
 # Validate a few PIDs into a fresh folder (interactive, no queue)
-OUTPUT_ROOT=~/ceph/ea/denoised_lfp_test $PY -u compress.py --pids <pid1> <pid2>   # or --limit 3
+OUTPUT_ROOT=~/ceph/ea/denoised_lfp $PY -u compress.py --pids <pid1> <pid2>   # or --limit 3
 
 # Reprocess everything after a pipeline change: point at a new empty folder and run
 # normal mode (fresh folder → no stale caches → muting always applies), then delete
@@ -77,8 +77,9 @@ Get the total PID count from the first line each task logs — `Task 0/N: queuin
 ## Sync results to local
 
 ```bash
+OUTPUT_ROOT=/mnt/home/owinter/ceph/ea/denoised_lfp
 rsync -av --progress -e ssh --include='*/' --include='lf_compressed*.h5' --exclude='*' \
-  popeye:$OUTPUT_ROOT /Users/olivier/Documents/datadisk/lfp-processing/lfpack
+  popeye:$OUTPUT_ROOT /Users/olivier/Documents/datadisk/lfp-processing/lfpack/v01
 ```
 
 ## Local post-processing: attach IBL metadata
@@ -99,4 +100,16 @@ reported and their channels skipped (sync still attaches).
 ```bash
 python attach_ibl_metadata.py --dry-run   # report only: geometry check + failure summary
 python attach_ibl_metadata.py             # write attrs into the local archives
+```
+
+## Publish on S3
+```bash
+LOCAL=/Users/olivier/Documents/datadisk/lfp-processing/lfpack/bwm_v01/
+# bwm (flagship) — files: lf_compressed_all_bwm.h5, lf_compressed_aggressive_all_bwm.h5
+S3=s3://ibl-brain-wide-map-public/resources/ibl-agent-data/
+aws --profile ibl s3 sync $LOCAL/bwm         $S3/bwm         --exclude '*' --include 'lf_compressed*.h5' --dryrun
+
+# ephys-atlas (superset, private) — lf_compressed_all.h5, lf_compressed_aggressive_all.h5
+S3=s3://ibl-brain-wide-map-private/resources/lfp
+aws --profile ibl s3 sync $LOCAL/ephys-atlas $S3/ephys-atlas --exclude '*' --include 'lf_compressed*.h5' --dryrun
 ```

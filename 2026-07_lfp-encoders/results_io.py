@@ -111,6 +111,7 @@ def save_pid_result(
     # groups leave their dr2_* column NaN after load_scores concatenation.
     scores["has_wheel"] = "wheel" in result.groups
     scores["has_pupil"] = "pupil" in result.groups
+    scores["n_valid"] = result.n_valid
     for group, dr in result.dr2.items():
         scores[f"dr2_{group}"] = dr
     if null is not None:
