@@ -9,8 +9,11 @@ ceph.  Consolidates two previously separate passes:
    Source: the ephys-atlas features dataframe (one bulk load, no per-PID network calls),
    falling back to ``SpikeSortingLoader.load_channels`` for PIDs absent from it.
 
-2. **Sync** — the sample→time affine written to every scale's meta as ``fs_sync`` /
-   ``t0_sync``, fitted from the probe sync pulses (QC: max residual < 1 ms).
+2. **Sync** — the registered sample↔time knot pairs (as fitted by IBL's
+   ``sync_probe_front_times()``, either an exact multi-pulse fit or a smooth 2-point fit,
+   whichever that extractor's own defect detection chose) written to every scale's meta via
+   ``lfpack.write_sync_attrs``. No re-fitting or residual gating happens here — this script
+   trusts the extractor's fit-type choice.
 
 **Position-based join.**  Channel annotations are placed onto the archive's channels by
 **exact electrode position**, not by row order: the source coords (``lateral_um`` /
@@ -33,12 +36,13 @@ from pathlib import Path
 import ephysatlas.anatomy
 import ephysatlas.data
 import h5py
+import lfpack
 import numpy as np
 import tqdm
 from brainbox.io.one import SpikeSortingLoader
-from one.api import ONE
-
 from lfpack import LFPackReader
+from one.alf.exceptions import ALFObjectNotFound
+from one.api import ONE
 
 # ── config ───────────────────────────────────────────────────────────────────
 LOCAL_ROOT = Path("/Users/olivier/Documents/datadisk/lfp-processing/lfpack")
@@ -47,12 +51,15 @@ PROJECT = "ea_active"
 # LFP base rate = AP rate / (AP_RESAMPLE × LFP_RESAMPLE); sync pulses are in AP samples.
 LFP_AP_RESAMPLE_FACTOR = 12
 LFP_RESAMPLE_FACTOR = 10
-SYNC_MAX_RESIDUAL_S = 1e-3  # QC threshold on the sample→time linear fit
 GEOM_MIN_MATCH = 0.5        # below this exact-match fraction the source is the wrong probe (skip);
                             # above it, unmatched archive channels are just dropped-source channels
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
+
+
+class SyncInvalid(ValueError):
+    """Raised when a probe's registered sync knots fail basic structural validation."""
 
 
 def load_features_by_pid(one):
@@ -106,18 +113,45 @@ def get_channels(pid, features_by_pid, one):
 
 
 def compute_sync(ssl):
-    """Fit the sample→time affine from probe sync pulses at the LFP base rate.
+    """Load the probe's registered sample↔time sync knots, at the LFP base rate.
 
-    Returns (t0_sync, fs_sync, qc_pass, max_residual_s).
+    ``ssl.samples2times(0)`` triggers the sync download and lets the extractor's own,
+    more sophisticated defect detection pick the fit type (``'exact'`` multi-pulse or
+    ``'smooth'`` 2-point) — this function trusts that choice and returns the resulting
+    knot pairs unchanged, after only a structural sanity check. No affine re-fit and no
+    residual/magnitude gating: those would either discard real non-linear structure or
+    re-second-guess a decision the extractor already made better.
+
+    Parameters
+    ----------
+    ssl : brainbox.io.one.SpikeSortingLoader
+
+    Returns
+    -------
+    samples, times : np.ndarray, np.ndarray
+        Sync knots as (sample @ LFP base rate, time in seconds), strictly increasing,
+        size >= 2.
+
+    Raises
+    ------
+    SyncInvalid
+        The registered knots are too few, non-monotonic, or non-finite.
+    one.alf.exceptions.ALFObjectNotFound
+        Propagates unchanged — no sync dataset is registered for this probe.
     """
-    ssl.samples2times(0)  # triggers sync download
+    ssl.samples2times(0)  # triggers sync download; populates ssl._sync
     fs_ratio = LFP_RESAMPLE_FACTOR * LFP_AP_RESAMPLE_FACTOR
-    s = ssl._sync["timestamps"][:, 0] / fs_ratio  # AP samples → LFP base samples
-    t = ssl._sync["timestamps"][:, 1]             # seconds
-    slope, intercept = np.polyfit(s, t, 1)
-    residuals = t - np.polyval([slope, intercept], s)
-    max_residual_s = float(np.max(np.abs(residuals)))
-    return float(intercept), float(1.0 / slope), max_residual_s < SYNC_MAX_RESIDUAL_S, max_residual_s
+    timestamps = ssl._sync["timestamps"]
+    samples = timestamps[:, 0] / fs_ratio  # AP samples → LFP base samples
+    times = timestamps[:, 1]               # seconds
+
+    if samples.size < 2:
+        raise SyncInvalid(f"fewer than 2 sync knots ({samples.size})")
+    if not (np.all(np.isfinite(samples)) and np.all(np.isfinite(times))):
+        raise SyncInvalid("sync knots contain non-finite values")
+    if not (np.all(np.diff(samples) > 0) and np.all(np.diff(times) > 0)):
+        raise SyncInvalid("sync knots are not strictly increasing")
+    return samples, times
 
 
 def join_channels_to_archive(meta, channels):
@@ -194,23 +228,35 @@ def main():
     pids = sorted({pid for f in h5files for pid in LFPackReader.recordings(f)})
     log.info(f"{len(h5files)} archive(s), {len(pids)} unique recording(s)")
 
-    fail_channels, fail_sync_qc, geom_mismatch = [], [], []
+    fail_channels, geom_mismatch = [], []
+    fail_sync_missing, fail_sync_invalid, fail_sync_unexpected = [], [], []
 
     for pid in tqdm.tqdm(pids):
         channels = get_channels(pid, features_by_pid, one)
         if channels is None:
             fail_channels.append(pid)
 
+        # Sync: bucket the outcome into exactly one of three categories. The
+        # ALFObjectNotFound/SyncInvalid catches wrap *only* compute_sync (inner try) — the
+        # SpikeSortingLoader construction stays under the outer bare-Exception catch alone,
+        # so an unrelated loader bug can never be miscategorized as "no sync data".
+        samples = times = None
+        sync_fail = None
         try:
             ssl = SpikeSortingLoader(one=one, pid=pid)
-            t0_sync, fs_sync, qc_pass, max_res = compute_sync(ssl)
-            if not qc_pass:
-                log.warning(f"  {pid}: sync QC FAIL (max residual {max_res * 1e3:.3f} ms) — skipping sync")
-                fail_sync_qc.append(pid)
-        except Exception as e:  # noqa: BLE001
-            log.warning(f"  {pid}: sync FAIL — {e}")
-            fail_sync_qc.append(pid)
-            qc_pass = False
+            try:
+                samples, times = compute_sync(ssl)
+            except ALFObjectNotFound:
+                sync_fail = "missing"
+                fail_sync_missing.append(pid)
+            except SyncInvalid as e:
+                log.warning(f"  {pid}: sync invalid — {e}")
+                sync_fail = "invalid"
+                fail_sync_invalid.append(pid)
+        except Exception:
+            log.exception(f"  {pid}: unexpected error computing sync")
+            sync_fail = "unexpected"
+            fail_sync_unexpected.append(pid)
 
         for h5file in h5files:
             with h5py.File(h5file, "r" if args.dry_run else "a") as f:
@@ -248,16 +294,27 @@ def main():
                                         "attr (was detection fed through at compression?)")
 
                 # ── sync (all scales, rate-scaled from base) ────────────────────
-                if qc_pass and not args.dry_run:
+                # Every outcome (success or any of the three failure buckets) must be
+                # reflected in every scale's meta on *this* run — otherwise a re-run that
+                # fails today would silently keep a previous run's stale sync attrs.
+                if not args.dry_run:
                     for key in sorted(k for k in f[pid].keys() if k.isdigit()):
                         meta = f[f"{pid}/{key}/meta"]
-                        meta.attrs["t0_sync"] = t0_sync
-                        meta.attrs["fs_sync"] = fs_sync * float(meta.attrs["fs"]) / fs_base
+                        if sync_fail is None:
+                            scale_ratio = float(meta.attrs["fs"]) / fs_base
+                            lfpack.write_sync_attrs(meta, samples * scale_ratio, times)
+                        else:
+                            lfpack.clear_sync_attrs(meta)
 
     log.info("Done.")
     log.info(f"channels source failures : {len(fail_channels)}  {fail_channels or ''}")
-    log.info(f"sync QC/loader failures  : {len(fail_sync_qc)}  {fail_sync_qc or ''}")
+    log.info(f"sync missing (no dataset): {len(fail_sync_missing)}  {fail_sync_missing or ''}")
+    log.info(f"sync invalid (bad knots) : {len(fail_sync_invalid)}  {fail_sync_invalid or ''}")
     log.info(f"geometry mismatches      : {len(geom_mismatch)}  {geom_mismatch or ''}")
+    log.info(f"sync unexpected failures : {len(fail_sync_unexpected)}  {fail_sync_unexpected or ''}")
+    if fail_sync_unexpected:
+        log.error(f"{len(fail_sync_unexpected)} PID(s) hit an unexpected sync failure — failing loudly.")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
