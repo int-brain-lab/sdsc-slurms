@@ -1,18 +1,19 @@
 """
-Reduce step: aggregate per-PID lf_compressed*.h5 files into a pair of
-multi-recording HDF5 archives.
+Reduce step: aggregate per-PID lf_compressed*.h5 files into a per-tier
+multi-recording HDF5 archive, one tier per entry in PASSES.
 
 Scans OUTPUT_ROOT for subdirectories that contain the Cadzow checkpoint
 (lf_resampled_car_cadzow.npy), which is the completion sentinel for the
-expensive decimation stage.  For each such directory it also checks that
-the corresponding lf_compressed.h5 / lf_compressed_aggressive.h5 exist
-before adding them to the combined file.
+expensive decimation stage.  For each pass it then independently checks
+which of those PIDs already have that pass's own per-PID H5 (a PID missing
+one tier but not another -- e.g. a newly-added tier mid-backfill -- is
+simply skipped for that tier only, not the whole PID) before merging.
 
-Output files (written to OUTPUT_ROOT):
+Output files (written to OUTPUT_ROOT), one src/dst pair per PASSES entry, e.g.:
+    lf_compressed_mild_all.h5           mild parameters      (ε=100, α=14)
     lf_compressed_all.h5                default parameters  (ε=150, α=28)
     lf_compressed_aggressive_all.h5     aggressive params   (ε=450, α=96)
-    lf_compressed_all_bwm.h5            default, BWM only   (--bwm)
-    lf_compressed_aggressive_all_bwm.h5 aggressive, BWM only (--bwm)
+    <dst>_bwm.h5                        same, BWM only       (--bwm)
 
 Each per-PID file stores the recording under its original binary-stem key;
 this script supplies a recording_map so each group is stored under the PID
@@ -24,13 +25,13 @@ as warnings so completeness can be tracked.
 
 Usage
 -----
-# Aggregate all ready PIDs (both compression passes):
+# Aggregate all ready PIDs (every compression pass in PASSES):
 python reduce.py
 
 # Aggregate only BWM freeze PIDs and report missing ones:
 python reduce.py --bwm
 
-# Aggregate BWM PIDs, default pass only:
+# Aggregate BWM PIDs, one pass only:
 python reduce.py --bwm --passes default
 
 # Custom output root:
@@ -50,6 +51,7 @@ PROJECT      = 'ibl_neuropixel_brainwide_01'
 SENTINEL     = 'lf_resampled_car_cadzow.npy'
 
 PASSES = {
+    'mild':       ('lf_compressed_mild.h5',       'lf_compressed_mild_all.h5'),
     'default':    ('lf_compressed.h5',            'lf_compressed_all.h5'),
     'aggressive': ('lf_compressed_aggressive.h5', 'lf_compressed_aggressive_all.h5'),
 }

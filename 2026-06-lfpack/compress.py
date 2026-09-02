@@ -7,9 +7,9 @@ Parallelism strategy: 4 outer workers × 12 inner cores = 48 cores total.
   for both the Cadzow decimation stage and the SVD+WP compression stage.
 
 The Cadzow checkpoint (~1.4 GB/PID) lives on /scratch (fast local NVMe) and is
-shared between the default and aggressive compression passes, so the expensive
-Cadzow step runs only once per PID.  The tiny output H5s (~2 MB each) are written
-directly to ceph.  Scratch is cleaned up per-PID regardless of success or failure.
+shared across every compression tier in PARAMS, so the expensive Cadzow step
+runs only once per PID.  The tiny output H5s (~2 MB each) are written directly
+to ceph.  Scratch is cleaned up per-PID regardless of success or failure.
 """
 import argparse
 import os
@@ -36,6 +36,7 @@ N_INNER = 12  # cores per PID  (N_OUTER × N_INNER == 48)
 # ── Compression parameters (mirrors 2026-06-02_LFP_compression.py) ────────────
 Q = 10
 PARAMS = {
+    'mild':       dict(epsilon=100.0, alpha=14.0),
     'default':    dict(epsilon=150.0, alpha=28.0),
     'aggressive': dict(epsilon=450.0, alpha=96.0),
 }
@@ -72,7 +73,7 @@ def _fix_muted_attr(h5_file):
 
 
 def compress_pid(pid, overwrite=False):
-    """Compress one PID: Cadzow checkpoint on scratch → default H5 → aggressive H5 on ceph.
+    """Compress one PID: Cadzow checkpoint on scratch → one H5 per ``PARAMS`` tier on ceph.
 
     Parameters
     ----------
@@ -88,13 +89,18 @@ def compress_pid(pid, overwrite=False):
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
     files = {
+        'mild':       out_dir.joinpath('lf_compressed_mild.h5'),
         'default':    out_dir.joinpath('lf_compressed.h5'),
         'aggressive': out_dir.joinpath('lf_compressed_aggressive.h5'),
     }
-    # lf_compressed_aggressive.h5 is the sole completion sentinel: it is written
-    # last via atomic rename (*.h5tmp → *.h5) so a hard kill never leaves a
-    # half-written file that looks done.
-    if files['aggressive'].exists() and not overwrite:
+    # Completion sentinel: every tier's file must exist. Each is written via
+    # atomic rename (*.h5tmp → *.h5, see the loop below) so a hard kill never
+    # leaves a half-written file that looks done; checking all of them (rather
+    # than trusting one hardcoded "last" tier) keeps this correct regardless of
+    # PARAMS insertion order or how many tiers exist -- e.g. a PID whose
+    # default/aggressive already completed under an older PARAMS still resumes
+    # into computing just the newly-added 'mild' tier below.
+    if all(f.exists() for f in files.values()) and not overwrite:
         return
 
     if overwrite:
