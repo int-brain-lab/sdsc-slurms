@@ -6,10 +6,11 @@ Parallelism strategy: 4 outer workers × 12 inner cores = 48 cores total.
 - Inner (ProcessPoolExecutor / joblib): each compress_bin_to_h5 call uses 12 cores
   for both the Cadzow decimation stage and the SVD+WP compression stage.
 
-The Cadzow checkpoint (~1.4 GB/PID) lives on /scratch (fast local NVMe) and is
-shared across every compression tier in PARAMS, so the expensive Cadzow step
-runs only once per PID.  The tiny output H5s (~2 MB each) are written directly
-to ceph.  Scratch is cleaned up per-PID regardless of success or failure.
+The Cadzow checkpoint (~1.4 GB/PID) lives on node-local scratch (SCRATCH_ROOT,
+set by the caller -- e.g. compress.sbatch's SCRATCH_BASE=/tmp) and is shared
+across every compression tier in PARAMS, so the expensive Cadzow step runs
+only once per PID.  The tiny output H5s (~2 MB each) are written directly to
+ceph.  Scratch is cleaned up per-PID regardless of success or failure.
 """
 import argparse
 import os

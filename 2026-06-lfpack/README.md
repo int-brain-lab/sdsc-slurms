@@ -46,9 +46,14 @@ sacct -j <JOBID> --format=JobID,Elapsed,CPUTime,NCPUS
 
 ## Parallelism
 
-The node has 48 cores and 1 TB local NVMe (`/scratch`). Each PID runs two internally
-parallel stages: Cadzow decimation (writes the ~1.4 GB checkpoint to scratch, archived to
-ceph and reused on reruns) then SVD+WP compression (×2 levels, ~2 MB each). The job runs
+The node has 48 cores and node-local scratch storage for the working directory
+(`compress.sbatch`'s `SCRATCH_BASE`, currently `/tmp` -- was `/scratch` until an
+SDSC-side config change 2026-09-02 made it permission-denied; capacity/type of
+`/tmp` on these nodes hasn't been characterized, worth checking if a run starts
+failing with disk-space errors instead). Each PID runs two internally parallel
+stages: Cadzow decimation (writes the ~1.4 GB checkpoint to scratch, archived to
+ceph and reused on reruns) then SVD+WP compression (one pass per `PARAMS` tier,
+~2 MB each). The job runs
 `N_OUTER=4` PIDs concurrently × `N_INNER=12` cores = 48. Four in parallel hides ceph I/O
 latency; scaling one PID past ~12–16 workers gives diminishing returns.
 
