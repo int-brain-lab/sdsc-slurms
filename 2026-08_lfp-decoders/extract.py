@@ -88,6 +88,7 @@ CADZOW_NPY = "lf_resampled_car_cadzow.npy"
 COMPRESSED_FILES = {
     "default": "lf_compressed_all.h5",
     "aggressive": "lf_compressed_aggressive_all.h5",
+    "mild": "lf_compressed_mild_all.h5",
 }
 SOURCES = (*COMPRESSED_FILES, UNCOMPRESSED)
 SNIPPET_MODES = ("all", "saturation-avoided")
@@ -110,8 +111,8 @@ def download_lfp(source: str, one=None) -> Path:
     Thin wrapper around ``ephysatlas.data.download_lfp_features`` (the
     canonical S3 accessor for this exact archive -- private bucket, needs
     Alyx-issued AWS credentials via an authenticated ``one.api.ONE``/``OneSdsc``
-    instance). ``level`` maps 1:1 to our ``source`` name for the two
-    compressed tiers.
+    instance). ``level`` maps 1:1 to our ``source`` name for the compressed
+    tiers.
     """
     import ephysatlas.data as ea_data
 
