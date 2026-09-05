@@ -30,12 +30,18 @@ import seaborn as sns
 
 sns.set_theme(context="notebook")
 
-SOURCE_ORDER = ["default", "aggressive", "uncompressed"]
+# Ordered by increasing compression (decreasing fidelity) for the compression-impact
+# plot and recap table. "mild" only has a snippet_mode="all" run (no saturation-avoided
+# variant), so the saturation-impact plot uses SATURATION_SOURCE_ORDER instead, which
+# excludes it.
+SOURCE_ORDER = ["uncompressed", "mild", "default", "aggressive"]
+SATURATION_SOURCE_ORDER = ["default", "aggressive", "uncompressed"]
 MODE_ORDER = ["all", "saturation-avoided"]
 SOURCE_LABELS = {
     "default": "default\n(lfpack ε=150, α=28)",
     "aggressive": "aggressive\n(lfpack ε=450, α=96)",
     "uncompressed": "uncompressed\n(Cadzow reference)",
+    "mild": "mild\n(lfpack ε=100, α=14)",
 }
 FIGURE_DIR = Path.home().joinpath("Documents", "figures")
 
@@ -73,7 +79,7 @@ def _annotate_bars(ax) -> None:
 def plot_compression_impact(df: pd.DataFrame, out_path: Path) -> None:
     """Idea 1: accuracy by LFP source only, snippet_mode == 'all'."""
     data = df[df["snippet_mode"] == "all"]
-    fig, ax = plt.subplots(figsize=(6, 4.5))
+    fig, ax = plt.subplots(figsize=(8, 4.5))
     sns.barplot(
         data=data, x="lfp_source", y="accuracy", order=SOURCE_ORDER,
         hue="lfp_source", palette=sns.color_palette("colorblind", n_colors=len(SOURCE_ORDER)),
@@ -98,18 +104,18 @@ def plot_saturation_impact(df: pd.DataFrame, out_path: Path) -> None:
     palette = sns.color_palette("colorblind", n_colors=len(MODE_ORDER))
     sns.barplot(
         data=folds, x="lfp_source", y="fold_accuracy", hue="snippet_mode",
-        order=SOURCE_ORDER, hue_order=MODE_ORDER, palette=palette,
+        order=SATURATION_SOURCE_ORDER, hue_order=MODE_ORDER, palette=palette,
         errorbar="sd", capsize=0.1, err_kws={"linewidth": 1.5, "color": "0.2"},
         ax=ax,
     )
     sns.stripplot(
         data=folds, x="lfp_source", y="fold_accuracy", hue="snippet_mode",
-        order=SOURCE_ORDER, hue_order=MODE_ORDER, dodge=True,
+        order=SATURATION_SOURCE_ORDER, hue_order=MODE_ORDER, dodge=True,
         palette=["#262626"] * len(MODE_ORDER), size=4, alpha=0.6, jitter=0.08,
         legend=False, ax=ax,
     )
-    ax.set_xticks(range(len(SOURCE_ORDER)))
-    ax.set_xticklabels([SOURCE_LABELS[s] for s in SOURCE_ORDER])
+    ax.set_xticks(range(len(SATURATION_SOURCE_ORDER)))
+    ax.set_xticklabels([SOURCE_LABELS[s] for s in SATURATION_SOURCE_ORDER])
     ax.set_ylim(0, 1)
     ax.set_xlabel("LFP source")
     ax.set_ylabel("Region-decoding accuracy (Cosmos, held-out)")
@@ -128,7 +134,10 @@ def plot_recap_table(df: pd.DataFrame, out_path: Path) -> pd.DataFrame:
         ["mean", "std", "min", "max"]
     )
     table = df.set_index(["lfp_source", "snippet_mode"])[["n_pids", "n_channels"]].join(stats)
-    table = table.loc[[(s, m) for s in SOURCE_ORDER for m in MODE_ORDER]]
+    # Not every source has both snippet modes (e.g. "mild" is "all"-only) -- only
+    # include combos actually present rather than assuming a full cross-product.
+    available = [(s, m) for s in SOURCE_ORDER for m in MODE_ORDER if (s, m) in table.index]
+    table = table.loc[available]
     table.index = table.index.set_names(["LFP source", "snippet mode"])
     table = table.rename(columns={
         "mean": "accuracy (mean)", "std": "fold SD", "min": "fold min", "max": "fold max",
