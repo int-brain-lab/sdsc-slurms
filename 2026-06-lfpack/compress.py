@@ -34,12 +34,14 @@ os.environ['TQDM_DISABLE'] = '1'
 N_OUTER = 4   # PIDs processed simultaneously
 N_INNER = 12  # cores per PID  (N_OUTER × N_INNER == 48)
 
-# ── Compression parameters (mirrors 2026-06-02_LFP_compression.py) ────────────
+# ── Compression parameters: lfpack v04 tiers (lfpack 1.0, format 2, shared basis) ─
+# Chosen in oliche-quarto analyses/2026-06-lfp-compression-svd: α alone sets behaviour
+# decoding, so the tiers share ε = 100 and a 32-vector spatial basis.  v03 deprecated.
 Q = 10
 PARAMS = {
-    'mild':       dict(epsilon=100.0, alpha=14.0),
-    'default':    dict(epsilon=150.0, alpha=28.0),
-    'aggressive': dict(epsilon=450.0, alpha=96.0),
+    'small':   dict(epsilon=100.0, alpha=14.0, basis_size=32),
+    'default': dict(epsilon=100.0, alpha=7.0, basis_size=32),
+    'fine':    dict(epsilon=100.0, alpha=2.5, basis_size=32),
 }
 CADZOW_KWARGS = dict(rank=5, niter=1, fmax=None, nswx=64, ovx=32, gap_threshold=2.0, ppca_k=2.0)
 
@@ -89,10 +91,12 @@ def compress_pid(pid, overwrite=False):
     scratch_dir = SCRATCH_ROOT.joinpath(pid)
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
+    # v04 names sit next to the v03 files, so the archived Cadzow checkpoint is reused
+    # and v03 outputs never satisfy the completion sentinel below.
     files = {
-        'mild':       out_dir.joinpath('lf_compressed_mild.h5'),
-        'default':    out_dir.joinpath('lf_compressed.h5'),
-        'aggressive': out_dir.joinpath('lf_compressed_aggressive.h5'),
+        'small':   out_dir.joinpath('lf_compressed_v04_a14_small.h5'),
+        'default': out_dir.joinpath('lf_compressed_v04_a07_default.h5'),
+        'fine':    out_dir.joinpath('lf_compressed_v04_a2p5_fine.h5'),
     }
     # Completion sentinel: every tier's file must exist. Each is written via
     # atomic rename (*.h5tmp → *.h5, see the loop below) so a hard kill never

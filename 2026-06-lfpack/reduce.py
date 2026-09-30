@@ -9,11 +9,12 @@ which of those PIDs already have that pass's own per-PID H5 (a PID missing
 one tier but not another -- e.g. a newly-added tier mid-backfill -- is
 simply skipped for that tier only, not the whole PID) before merging.
 
-Output files (written to OUTPUT_ROOT), one src/dst pair per PASSES entry, e.g.:
-    lf_compressed_mild_all.h5           mild parameters      (ε=100, α=14)
-    lf_compressed_all.h5                default parameters  (ε=150, α=28)
-    lf_compressed_aggressive_all.h5     aggressive params   (ε=450, α=96)
-    <dst>_bwm.h5                        same, BWM only       (--bwm)
+Output files (written to OUTPUT_ROOT), one src/dst pair per PASSES entry: the lfpack
+v04 tiers (lfpack 1.0, format 2, shared basis m=32, ε=100), see compress.py:
+    lf_compressed_v04_a14_small_all.h5      small   (α=14)
+    lf_compressed_v04_a07_default_all.h5    default (α=7)
+    lf_compressed_v04_a2p5_fine_all.h5      fine    (α=2.5)
+    <dst>_bwm.h5                            same, BWM only (--bwm)
 
 Each per-PID file stores the recording under its original binary-stem key;
 this script supplies a recording_map so each group is stored under the PID
@@ -51,9 +52,9 @@ PROJECT      = 'ibl_neuropixel_brainwide_01'
 SENTINEL     = 'lf_resampled_car_cadzow.npy'
 
 PASSES = {
-    'mild':       ('lf_compressed_mild.h5',       'lf_compressed_mild_all.h5'),
-    'default':    ('lf_compressed.h5',            'lf_compressed_all.h5'),
-    'aggressive': ('lf_compressed_aggressive.h5', 'lf_compressed_aggressive_all.h5'),
+    'small':   ('lf_compressed_v04_a14_small.h5',   'lf_compressed_v04_a14_small_all.h5'),
+    'default': ('lf_compressed_v04_a07_default.h5', 'lf_compressed_v04_a07_default_all.h5'),
+    'fine':    ('lf_compressed_v04_a2p5_fine.h5',   'lf_compressed_v04_a2p5_fine_all.h5'),
 }
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s  %(levelname)s  %(message)s')
@@ -118,7 +119,7 @@ def main() -> None:
     )
     parser.add_argument(
         '--passes', nargs='+', choices=list(PASSES), default=list(PASSES),
-        help='Which compression pass(es) to aggregate (default: both).',
+        help='Which compression pass(es) to aggregate (default: all).',
     )
     parser.add_argument(
         '--bwm', action='store_true',
