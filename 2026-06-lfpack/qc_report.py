@@ -8,12 +8,16 @@ Aggregates, per recording (PID) and per chunk, the three QC axes:
 * **bad channels** — counts of dead / noisy / outside-brain channels (from the
   ``labels`` attr on ``/<pid>/00/meta``, written via detect_bad_channels.py → compress.py);
 * **compression** — per-chunk SVD / wavelet-packet / total compression ratios and RMSE
-  (from each ``chunks/<i>`` group's attrs).
+  (format 2: the ``codec/chunk_table`` rows; format 1: each ``chunks/<i>`` group's attrs),
+  plus the on-disk ``size_ratio`` per PID (stored bytes of scale 00 / float32 samples, i.e.
+  1/CR on the file).  In format 2 the chunk ``cr_*`` and ``rmse`` are the codec's own
+  per-chunk values, computed before the shared spatial basis is fitted: ``size_ratio`` is the
+  size that matters.
 
-Reads every ``lf_compressed*all*.h5`` under ``--local-root``.  The ``default`` and
-``aggressive`` passes (and ``bwm`` vs full-atlas subsets) are tagged in ``pass`` / ``subset``
-columns.  Saturation and bad-channel figures dedupe to one row per PID (they are
-pass-independent recording properties copied into both archives).
+Reads every ``lf_compressed*all*.h5`` under ``--local-root``.  The pass (v04 ``small`` /
+``default`` / ``fine``, v03 ``mild`` / ``default`` / ``aggressive``) and ``bwm`` vs full-atlas
+subset are tagged in ``pass`` / ``subset`` columns.  Saturation and bad-channel figures dedupe
+to one row per PID (they are pass-independent recording properties copied into every archive).
 
 Outputs
 -------
@@ -40,13 +44,52 @@ FIG_DIR = Path.home().joinpath("Documents", "figures")
 LABEL_NAMES = {0: "good", 1: "dead", 2: "noisy", 3: "outside"}
 
 
+PASS_NAMES = ("small", "fine", "mild", "aggressive")  # anything else is "default"
+
+
 def _pass_subset(h5file):
     """Derive (pass, subset) tags from a merged-archive filename."""
     name = h5file.name
     return (
-        "aggressive" if "aggressive" in name else "default",
+        next((p for p in PASS_NAMES if p in name), "default"),
         "bwm" if "bwm" in name else "full",
     )
+
+
+def _chunk_rows(scale_group):
+    """Per-chunk codec metrics of one scale, format 2 (``codec``) or format 1 (``chunks``).
+
+    Parameters
+    ----------
+    scale_group : h5py.Group
+        The ``/<pid>/00`` group.
+
+    Returns
+    -------
+    list[dict]
+        One dict per chunk: ``chunk``, ``ns_original``, ``cr_total``, ``cr_svd``, ``cr_wp``
+        and ``rmse`` (µV; the stored value is in data units, volts).
+    """
+    fields = ("ns_original", "cr_total", "cr_svd", "cr_wp", "rmse")
+    if "codec" in scale_group:
+        table = scale_group["codec/chunk_table"][()]
+        records = (dict(zip(fields, (row[k] for k in fields))) for row in table)
+    else:
+        cg = scale_group["chunks"]
+        records = ({k: cg[ci].attrs[k] for k in fields} for ci in sorted(cg.keys(), key=int))
+    return [
+        dict(chunk=ci, ns_original=int(r["ns_original"]), cr_total=float(r["cr_total"]),
+             cr_svd=float(r["cr_svd"]), cr_wp=float(r["cr_wp"]), rmse=float(r["rmse"]) * 1e6)
+        for ci, r in enumerate(records)
+    ]
+
+
+def _stored_bytes(group):
+    """Total on-disk (compressed) bytes of every dataset under *group*."""
+    sizes = []
+    group.visititems(lambda _, obj: sizes.append(obj.id.get_storage_size())
+                     if isinstance(obj, h5py.Dataset) else None)
+    return int(sum(sizes))
 
 
 def scan_archive(h5file):
@@ -98,29 +141,24 @@ def scan_archive(h5file):
                 )
 
             # ── compression metrics (per chunk) ─────────────────────────────
-            cg = f[f"{pid}/00/chunks"]
-            cr_total, cr_svd, cr_wp, rmse = [], [], [], []
-            for ci in sorted(cg.keys(), key=int):
-                a = cg[ci].attrs
-                # The chunk `rmse` attr is in data units (volts); the report presents
-                # RMSE in µV throughout (axis labels, 25 µV target), so convert here.
-                row = dict(
-                    pid=pid, pass_=pass_name, subset=subset, chunk=int(ci),
-                    ns_original=int(a["ns_original"]),
-                    cr_total=float(a["cr_total"]), cr_svd=float(a["cr_svd"]),
-                    cr_wp=float(a["cr_wp"]), rmse=float(a["rmse"]) * 1e6,
-                )
-                per_chunk.append(row)
-                cr_total.append(row["cr_total"])
-                cr_svd.append(row["cr_svd"])
-                cr_wp.append(row["cr_wp"])
-                rmse.append(row["rmse"])
+            # The report presents RMSE in µV throughout (axis labels, 25 µV target).
+            rows = [dict(pid=pid, pass_=pass_name, subset=subset, **r)
+                    for r in _chunk_rows(f[f"{pid}/00"])]
+            per_chunk.extend(rows)
+            cr_total, cr_svd, cr_wp, rmse = (
+                [r[k] for r in rows] for k in ("cr_total", "cr_svd", "cr_wp", "rmse")
+            )
+            stored = _stored_bytes(f[f"{pid}/00"])
 
             per_pid.append(dict(
                 pid=pid, pass_=pass_name, subset=subset,
                 nc=nc, fs=fs, ns_total=ns_total, duration_s=ns_total / fs if fs else np.nan,
                 epsilon=float(meta.get("epsilon", np.nan)),
                 alpha=float(meta.get("alpha", np.nan)),
+                format_version=int(meta.get("format_version", 1)),
+                basis_size=int(meta.get("basis_size", 0)),
+                stored_bytes=stored,
+                size_ratio=stored / (ns_total * nc * 4) if ns_total and nc else np.nan,
                 n_chunks=len(cr_total),
                 **counts, n_bad=n_bad,
                 frac_bad=n_bad / nc if nc and not np.isnan(n_bad) else np.nan,
@@ -238,7 +276,9 @@ def main():
               f"max {g1['saturated_fraction'].max():.4%}")
         print(f"  bad channels       : median {g1['frac_bad'].median():.2%}  "
               f"max {g1['frac_bad'].max():.2%}")
-        print(f"  compression ratio  : median {g['cr_total_median'].median():.0f}")
+        print(f"  file / float32     : {g['stored_bytes'].sum() / (g['ns_total'] * g['nc'] * 4).sum():.2%}"
+              f"  (summed over PIDs, scale 00)")
+        print(f"  compression ratio  : median {g['cr_total_median'].median():.0f}  (codec, per chunk)")
         print(f"  RMSE [µV]          : median {g['rmse_median'].median():.2f}  "
               f"max {g['rmse_max'].max():.2f}")
 

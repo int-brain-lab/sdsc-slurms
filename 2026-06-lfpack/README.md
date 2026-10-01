@@ -81,11 +81,23 @@ Get the total PID count from the first line each task logs — `Task 0/N: queuin
 
 ## Sync results to local
 
+`reduce.py` and `reduce.py --bwm` write the merged archives at the root of `OUTPUT_ROOT`. Copy
+them into one local folder per cohort. Expect ~5–9 MB/s, i.e. a few hours for v04. `--partial`
+keeps a dropped transfer and macOS `openrsync` resumes it with `--append` (it has no
+`--append-verify`), so check the md5 against ceph afterwards.
+
 ```bash
-OUTPUT_ROOT=/mnt/home/owinter/ceph/ea/denoised_lfp
-rsync -av --progress -e ssh --include='*/' --include='lf_compressed*.h5' --exclude='*' \
-  popeye:$OUTPUT_ROOT /Users/olivier/Documents/datadisk/lfp-processing/lfpack/v01
+OUTPUT_ROOT=ceph/ea/denoised_lfp
+LOCAL=/Users/olivier/Documents/datadisk/lfp-processing/lfpack
+rsync -a --partial --append "popeye:$OUTPUT_ROOT/lf_compressed_v04_*_all.h5"     $LOCAL/v04/
+rsync -a --partial --append "popeye:$OUTPUT_ROOT/lf_compressed_v04_*_all_bwm.h5" $LOCAL/v04_bwm/
+ssh popeye "md5sum $OUTPUT_ROOT/lf_compressed_v04_*.h5"; md5sum $LOCAL/v04*/*.h5
 ```
+
+Label each folder separately (`--local-root $LOCAL/v04`, then `$LOCAL/v04_bwm`, see below):
+`attach_ibl_metadata.py` writes into every `*compressed*.h5` under the root, so keep other
+versions out of it. Once labelled, the local archives are the release; the ceph copies stay
+unlabelled.
 
 ## Local post-processing: attach IBL metadata
 
@@ -108,13 +120,24 @@ python attach_ibl_metadata.py             # write attrs into the local archives
 ```
 
 ## Publish on S3
-```bash
-LOCAL=/Users/olivier/Documents/datadisk/lfp-processing/lfpack/bwm_v01/
-# bwm (flagship) — files: lf_compressed_all_bwm.h5, lf_compressed_aggressive_all_bwm.h5
-S3=s3://ibl-brain-wide-map-public/resources/ibl-agent-data/
-aws --profile ibl s3 sync $LOCAL/bwm         $S3/bwm         --exclude '*' --include 'lf_compressed*.h5' --dryrun
 
-# ephys-atlas (superset, private) — lf_compressed_all.h5, lf_compressed_aggressive_all.h5
-S3=s3://ibl-brain-wide-map-private/resources/lfp
-aws --profile ibl s3 sync $LOCAL/ephys-atlas $S3/ephys-atlas --exclude '*' --include 'lf_compressed*.h5' --dryrun
+Upload the **labelled** local archives. BWM goes to the public bucket, at the root of
+`ibl-agent-data/` next to the v03 BWM files (not a `bwm/` subfolder). The full ephys-atlas
+cohort goes to the private bucket.
+
+```bash
+LOCAL=/Users/olivier/Documents/datadisk/lfp-processing/lfpack
+# BWM (699 PIDs, public): lf_compressed_v04_{a14_small,a07_default,a2p5_fine}_all_bwm.h5
+aws --profile ibl s3 sync $LOCAL/v04_bwm s3://ibl-brain-wide-map-public/resources/ibl-agent-data \
+  --exclude '*' --include 'lf_compressed_v04_*_all_bwm.h5' --dryrun
+# ephys-atlas (1099 PIDs, private): lf_compressed_v04_{a14_small,a07_default,a2p5_fine}_all.h5
+aws --profile ibl s3 sync $LOCAL/v04 s3://ibl-brain-wide-map-private/resources/lfp/ephys-atlas \
+  --exclude '*' --include 'lf_compressed_v04_*_all.h5' --dryrun
 ```
+
+Drop `--dryrun` to upload. From the laptop that took ~5.5 h for the 133 GB of v04.
+
+| release | BWM (public) | ephys-atlas (private) |
+|---|---|---|
+| v04 (2026-10-01; lfpack 1.0, ε = 100, m = 32, α = 14 / 7 / 2.5) | small 7.7 · default 14.9 · fine 31.9 GB | small 11.2 · default 21.5 · fine 46.1 GB |
+| v03 (deprecated) | mild 23.3 · default 15.6 · aggressive 8.1 GB | not shipped |
