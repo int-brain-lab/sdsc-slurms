@@ -140,4 +140,4 @@ Drop `--dryrun` to upload. From the laptop that took ~5.5 h for the 133 GB of v0
 | release | BWM (public) | ephys-atlas (private) |
 |---|---|---|
 | v04 (2026-10-01; lfpack 1.0, ε = 100, m = 32, α = 14 / 7 / 2.5) | small 7.7 · default 14.9 · fine 31.9 GB | small 11.2 · default 21.5 · fine 46.1 GB |
-| v03 (deprecated) | mild 23.3 · default 15.6 · aggressive 8.1 GB | not shipped |
+| v03 (deprecated) | mild 23.3 · default 15.6 · aggressive 8.1 GB | mild 34.2 · default 23.0 · aggressive 12.1 GB, in `aggregates/atlas/projects/ibl_neuropixel_brainwide_01/lfp_aggregates/` (the path `ephysatlas.data` reads) |
