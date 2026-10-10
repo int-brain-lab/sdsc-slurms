@@ -43,7 +43,9 @@ PARAMS = {
     'default': dict(epsilon=100.0, alpha=7.0, basis_size=32),
     'fine':    dict(epsilon=100.0, alpha=2.5, basis_size=32),
 }
-CADZOW_KWARGS = dict(rank=5, niter=1, fmax=None, nswx=64, ovx=32, gap_threshold=2.0, ppca_k=2.0)
+# {} = lfpack Cadzow defaults for the probe geometry (lfpack.cadzow_lfp_kwargs: NP1 full grid + shrinkage, NP2 shrinkage);
+# v04 archives used dict(rank=5, niter=1, fmax=None, nswx=64, ovx=32, gap_threshold=2.0, ppca_k=2.0)
+CADZOW_KWARGS = {}
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRATCH_ROOT = Path(os.environ.get('SCRATCH_ROOT', '/tmp/lfpack_local'))
