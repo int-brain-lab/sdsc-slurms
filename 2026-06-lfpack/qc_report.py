@@ -14,7 +14,7 @@ Aggregates, per recording (PID) and per chunk, the three QC axes:
   per-chunk values, computed before the shared spatial basis is fitted: ``size_ratio`` is the
   size that matters.
 
-Reads every ``lf_compressed*all*.h5`` under ``--local-root``.  The pass (v04 ``small`` /
+Reads every ``lf_compressed*all*.h5`` under ``--local-root``.  The pass (v04 / v05 ``small`` /
 ``default`` / ``fine``, v03 ``mild`` / ``default`` / ``aggressive``) and ``bwm`` vs full-atlas
 subset are tagged in ``pass`` / ``subset`` columns.  Saturation and bad-channel figures dedupe
 to one row per PID (they are pass-independent recording properties copied into every archive).

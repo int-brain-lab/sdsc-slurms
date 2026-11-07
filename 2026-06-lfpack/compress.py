@@ -9,10 +9,13 @@ Parallelism strategy: 4 outer workers × 12 inner cores = 48 cores total.
 The Cadzow checkpoint (~1.4 GB/PID) lives on node-local scratch (SCRATCH_ROOT,
 set by the caller -- e.g. compress.sbatch's SCRATCH_BASE=/tmp) and is shared
 across every compression tier in PARAMS, so the expensive Cadzow step runs
-only once per PID.  The tiny output H5s (~2 MB each) are written directly to
-ceph.  Scratch is cleaned up per-PID regardless of success or failure.
+only once per PID.  It is archived on ceph under a versioned name
+(lf_resampled_car_cadzow_v05.npy) so a resubmitted job resumes without
+--overwrite; the v04 checkpoint it replaces is deleted when the PID starts.
+The tiny output H5s (~2 MB each) are written directly to ceph.  Scratch is cleaned up per-PID regardless of success or failure.
 """
 import argparse
+import json
 import os
 import shutil
 import time
@@ -34,9 +37,10 @@ os.environ['TQDM_DISABLE'] = '1'
 N_OUTER = 4   # PIDs processed simultaneously
 N_INNER = 12  # cores per PID  (N_OUTER × N_INNER == 48)
 
-# ── Compression parameters: lfpack v04 tiers (lfpack 1.0, format 2, shared basis) ─
-# Chosen in oliche-quarto analyses/2026-06-lfp-compression-svd: α alone sets behaviour
-# decoding, so the tiers share ε = 100 and a 32-vector spatial basis.  v03 deprecated.
+# ── Compression parameters: lfpack v05 tiers (lfpack 1.2, ibl-neuropixel >= 1.14) ─────
+# Codec unchanged from v04 (oliche-quarto analyses/2026-06-lfp-compression-svd): α alone
+# sets behaviour decoding, so the tiers share ε = 100 and a 32-vector spatial basis.
+# v05 only changes Cadzow (analyses/2026-10-lfpack-v05).  v03 deprecated.
 Q = 10
 PARAMS = {
     'small':   dict(epsilon=100.0, alpha=14.0, basis_size=32),
@@ -46,6 +50,9 @@ PARAMS = {
 # {} = lfpack Cadzow defaults for the probe geometry (lfpack.cadzow_lfp_kwargs: NP1 full grid + shrinkage, NP2 shrinkage);
 # v04 archives used dict(rank=5, niter=1, fmax=None, nswx=64, ovx=32, gap_threshold=2.0, ppca_k=2.0)
 CADZOW_KWARGS = {}
+VERSION = 'v05'
+CADZOW_CHECKPOINT = f'lf_resampled_car_cadzow_{VERSION}.npy'
+LEGACY_CHECKPOINT = 'lf_resampled_car_cadzow.npy'  # v03/v04 Cadzow, superseded by CADZOW_CHECKPOINT
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRATCH_ROOT = Path(os.environ.get('SCRATCH_ROOT', '/tmp/lfpack_local'))
@@ -77,6 +84,43 @@ def _fix_muted_attr(h5_file):
             f[key].attrs["muted"] = True
 
 
+def _fill_cadzow_provenance(h5_file, cadzow_settings):
+    """Record the Cadzow settings in an archive built from a reused checkpoint.
+
+    ``compress_bin_to_h5`` writes ``processing = {"cadzow": None, "checkpoint_reused": True}``
+    in every ``meta`` group when it reuses a checkpoint, since it cannot know the settings
+    of an earlier call.  Here only the first tier of a PID computes Cadzow and the others
+    reuse its checkpoint, so its settings are copied into them.
+
+    Parameters
+    ----------
+    h5_file : path-like
+        Single-recording HDF5 file just written by ``compress_bin_to_h5``.
+    cadzow_settings : dict
+        The ``processing["cadzow"]`` entry of the archive that computed the checkpoint.
+    """
+    with h5py.File(h5_file, "r+") as f:
+        for recording in f.values():
+            for scale in recording.values():
+                if not (isinstance(scale, h5py.Group) and 'meta' in scale and 'processing' in scale['meta'].attrs):
+                    continue  # the saturation table sits next to the scales
+                attrs = scale['meta'].attrs
+                processing = json.loads(attrs['processing'])
+                if processing.get('cadzow') is None:
+                    processing['cadzow'] = cadzow_settings
+                    attrs['processing'] = json.dumps(processing, default=str, sort_keys=True)
+
+
+def _read_cadzow_provenance(h5_file):
+    """Return the ``processing["cadzow"]`` entry of a single-recording archive (None if absent)."""
+    with h5py.File(h5_file, 'r') as f:
+        for recording in f.values():
+            for scale in recording.values():
+                if isinstance(scale, h5py.Group) and 'meta' in scale and 'processing' in scale['meta'].attrs:
+                    return json.loads(scale['meta'].attrs['processing']).get('cadzow')
+    return None
+
+
 def compress_pid(pid, overwrite=False):
     """Compress one PID: Cadzow checkpoint on scratch → one H5 per ``PARAMS`` tier on ceph.
 
@@ -93,12 +137,12 @@ def compress_pid(pid, overwrite=False):
     scratch_dir = SCRATCH_ROOT.joinpath(pid)
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
-    # v04 names sit next to the v03 files, so the archived Cadzow checkpoint is reused
-    # and v03 outputs never satisfy the completion sentinel below.
+    # Versioned names sit next to the v03/v04 files, so older outputs never satisfy the
+    # completion sentinel below.
     files = {
-        'small':   out_dir.joinpath('lf_compressed_v04_a14_small.h5'),
-        'default': out_dir.joinpath('lf_compressed_v04_a07_default.h5'),
-        'fine':    out_dir.joinpath('lf_compressed_v04_a2p5_fine.h5'),
+        'small':   out_dir.joinpath(f'lf_compressed_{VERSION}_a14_small.h5'),
+        'default': out_dir.joinpath(f'lf_compressed_{VERSION}_a07_default.h5'),
+        'fine':    out_dir.joinpath(f'lf_compressed_{VERSION}_a2p5_fine.h5'),
     }
     # Completion sentinel: every tier's file must exist. Each is written via
     # atomic rename (*.h5tmp → *.h5, see the loop below) so a hard kill never
@@ -120,8 +164,11 @@ def compress_pid(pid, overwrite=False):
 
     # Cadzow checkpoint: fast local NVMe during computation, archived to ceph afterwards.
     # If the ceph archive exists from a prior run, seed scratch from it to skip recomputation.
-    cadzow_scratch  = scratch_dir.joinpath('lf_resampled_car_cadzow.npy')
-    cadzow_archive  = out_dir.joinpath('lf_resampled_car_cadzow.npy')
+    # The archive is versioned: the v04 checkpoint was made with the old Cadzow, so it is
+    # never reused, only deleted (overwritten in place, ~1.4 GB/PID on ceph).
+    cadzow_scratch  = scratch_dir.joinpath(CADZOW_CHECKPOINT)
+    cadzow_archive  = out_dir.joinpath(CADZOW_CHECKPOINT)
+    out_dir.joinpath(LEGACY_CHECKPOINT).unlink(missing_ok=True)
     if overwrite:
         # Stage 1 (decimation + saturation muting) must recompute from the raw .cbin,
         # so drop the stale pre-muting checkpoint rather than seeding from it.
@@ -145,6 +192,10 @@ def compress_pid(pid, overwrite=False):
         ssl = SpikeSortingLoader(one=one, pid=pid)
         sr  = ssl.raw_electrophysiology(band='lf', stream=False)
 
+        # Cadzow settings of the tier that computes the checkpoint, copied into the tiers that
+        # reuse it.  On a resumed PID, read them back from an already written tier.
+        cadzow_settings = next(
+            (s for s in (_read_cadzow_provenance(f) for f in files.values() if f.exists()) if s), None)
         for lbl, params in PARAMS.items():
             if files[lbl].exists():
                 print(f'{pid[:8]} {lbl}: exists, skipping', flush=True)
@@ -162,6 +213,10 @@ def compress_pid(pid, overwrite=False):
                 **params,
             )
             _fix_muted_attr(h5tmp)
+            if cadzow_settings is None:
+                cadzow_settings = _read_cadzow_provenance(h5tmp)
+            else:
+                _fill_cadzow_provenance(h5tmp, cadzow_settings)
             h5tmp.rename(files[lbl])  # atomic: sentinel only appears on success
             print(f'{pid[:8]} {lbl}: done in {time.perf_counter() - t0:.1f} s', flush=True)
 

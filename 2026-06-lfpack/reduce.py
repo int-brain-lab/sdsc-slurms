@@ -3,17 +3,18 @@ Reduce step: aggregate per-PID lf_compressed*.h5 files into a per-tier
 multi-recording HDF5 archive, one tier per entry in PASSES.
 
 Scans OUTPUT_ROOT for subdirectories that contain the Cadzow checkpoint
-(lf_resampled_car_cadzow.npy), which is the completion sentinel for the
+(lf_resampled_car_cadzow_v05.npy), which is the completion sentinel for the
 expensive decimation stage.  For each pass it then independently checks
 which of those PIDs already have that pass's own per-PID H5 (a PID missing
 one tier but not another -- e.g. a newly-added tier mid-backfill -- is
 simply skipped for that tier only, not the whole PID) before merging.
 
 Output files (written to OUTPUT_ROOT), one src/dst pair per PASSES entry: the lfpack
-v04 tiers (lfpack 1.0, format 2, shared basis m=32, ε=100), see compress.py:
-    lf_compressed_v04_a14_small_all.h5      small   (α=14)
-    lf_compressed_v04_a07_default_all.h5    default (α=7)
-    lf_compressed_v04_a2p5_fine_all.h5      fine    (α=2.5)
+v05 tiers (lfpack 1.2, ibl-neuropixel >= 1.14 Cadzow; codec as v04: format 2, shared
+basis m=32, ε=100), see compress.py:
+    lf_compressed_v05_a14_small_all.h5      small   (α=14)
+    lf_compressed_v05_a07_default_all.h5    default (α=7)
+    lf_compressed_v05_a2p5_fine_all.h5      fine    (α=2.5)
     <dst>_bwm.h5                            same, BWM only (--bwm)
 
 Each per-PID file stores the recording under its original binary-stem key;
@@ -49,12 +50,13 @@ from lfpack import merge_h5
 OUTPUT_ROOT  = Path('/mnt/home/owinter/ceph/ea/denoised_lfp')
 PROJECT_ROOT = Path.home().joinpath('data', 'ephys-atlas', 'projects')
 PROJECT      = 'ibl_neuropixel_brainwide_01'
-SENTINEL     = 'lf_resampled_car_cadzow.npy'
+VERSION      = 'v05'
+SENTINEL     = f'lf_resampled_car_cadzow_{VERSION}.npy'  # written by compress.py once every tier is done
 
 PASSES = {
-    'small':   ('lf_compressed_v04_a14_small.h5',   'lf_compressed_v04_a14_small_all.h5'),
-    'default': ('lf_compressed_v04_a07_default.h5', 'lf_compressed_v04_a07_default_all.h5'),
-    'fine':    ('lf_compressed_v04_a2p5_fine.h5',   'lf_compressed_v04_a2p5_fine_all.h5'),
+    'small':   (f'lf_compressed_{VERSION}_a14_small.h5',   f'lf_compressed_{VERSION}_a14_small_all.h5'),
+    'default': (f'lf_compressed_{VERSION}_a07_default.h5', f'lf_compressed_{VERSION}_a07_default_all.h5'),
+    'fine':    (f'lf_compressed_{VERSION}_a2p5_fine.h5',   f'lf_compressed_{VERSION}_a2p5_fine_all.h5'),
 }
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s  %(levelname)s  %(message)s')
