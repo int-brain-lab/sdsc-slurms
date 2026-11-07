@@ -14,11 +14,11 @@
 # sbatch job, not on the login node -- same login-node memory-cgroup risk as
 # aggregate.sbatch, now over the full ~1099-PID cohort's worth of channels
 # (the 20-PID smoke test fit on the login node fine; this is ~55x more channels).
-#   sbatch train_classifier.sbatch --lfp-source default --snippet-mode all
+#   sbatch train_classifier.sbatch --lfp-source default --snippet-mode all --feature-set lf
 
 PYTHON_EXEC=/mnt/home/owinter/Documents/ephys-atlas/.venv/bin/python
 PYTHON_SCRIPT=~/Documents/sdsc-slurms/2026-08_lfp-decoders/train_classifier.py
 
 module load python/3.11
 
-$PYTHON_EXEC -u $PYTHON_SCRIPT "$@"  # e.g. --lfp-source default --snippet-mode all
+$PYTHON_EXEC -u $PYTHON_SCRIPT "$@"  # e.g. --lfp-source default --snippet-mode all --feature-set lf

@@ -15,12 +15,11 @@ spikes, clusters, channels = ssl.load_spike_sorting()
 
 df_clusters = pd.DataFrame(ssl.merge_clusters(spikes, clusters, channels))
 
-df_clusters, stpc, tscale, coupling_strength, taper, coupling_delay, firing_rates = (
-    ephysatlas.cells.spike_triggered_population_coupling(
-        spikes,
-        df_clusters,
-    )
+result = ephysatlas.cells.spike_triggered_population_coupling_df(
+    spikes,
+    df_clusters,
 )
+df_clusters = result["df_clusters"]
 
 
 raise NotImplementedError

@@ -418,7 +418,7 @@ def stpc(pid):
     spikes, clusters, channels = ssl.load_spike_sorting()
     df_clusters = pd.DataFrame(ssl.merge_clusters(spikes, clusters, channels))
 
-    ephysatlas.cells.spike_triggered_population_coupling(
+    ephysatlas.cells.spike_triggered_population_coupling_df(
         spikes,
         df_clusters,
         file_stpc=outfile_tmp,

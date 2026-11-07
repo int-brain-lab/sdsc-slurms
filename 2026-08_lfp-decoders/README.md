@@ -47,8 +47,14 @@ configuration.
   `--snippet-mode saturation-avoided`.
 - `aggregate.py` — thin wrapper around `ephysatlas.aggregation.produce_output_dataframes`.
 - `train_classifier.py` — 5-fold PID-grouped `XGBClassifier`, Cosmos labels,
-  LF-only feature set (`voltage_features_set(["raw_lf","raw_lf_csd"])`),
   mirroring `packages/ibleatools/examples/training_region_predictor_gradient_boosting.py`.
+  `--feature-set {lf,full}` selects `raw_lf`+`raw_lf_csd` only (default) vs
+  `voltage_features_set("all")` (groups this project never computes, e.g.
+  `raw_ap`/`waveforms`, are silently dropped). Every run also automatically
+  trains and compares two misaligned-insertion policies —
+  `all_insertions` vs `excluded_misaligned` (drops
+  `ephysatlas.fixtures.misaligned_pids`) — against the *same* held-out test
+  PIDs, so only the training pool differs between them.
 - `report.py` — run **locally**, produces the two comparison barplots.
 
 ## Setup (before first submit)
@@ -95,10 +101,12 @@ memory-constrained):
 for source in default aggressive uncompressed; do
   for mode in all saturation-avoided; do
     python aggregate.py --lfp-source "$source" --snippet-mode "$mode"
-    python train_classifier.py --lfp-source "$source" --snippet-mode "$mode"
+    python train_classifier.py --lfp-source "$source" --snippet-mode "$mode" --feature-set lf
   done
 done
 ```
+Add `--feature-set full` runs alongside (writes `accuracy_full.json`, doesn't
+overwrite the `lf` run's `accuracy.json`) to compare against the full feature set.
 
 ## Check progress
 ```bash

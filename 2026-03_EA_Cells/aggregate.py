@@ -30,6 +30,7 @@ import tqdm
 import h5py
 import numpy as np
 import pandas as pd
+from ibldsp.waveforms import remap_waveform_shape_features  # ibl-neuropixel > 1.14.0
 from ephysatlas.cells import LAG, BINSIZE
 
 CELLS_PATH = Path('/mnt/home/owinter/ceph/ea/cells')
@@ -125,8 +126,17 @@ df_avg_waveforms_index = pd.concat(acc_df_avg_waveforms_index, ignore_index=True
 # same bitwise_fail == 0 order); only present if every insertion ran the stpc step
 stpc = np.concatenate(acc_stpc, axis=0) if has_stpc and acc_stpc else None
 stlfp = np.concatenate(acc_stlfp, axis=0) if has_stpc and acc_stlfp else None
+# Work on the full table, then re-extract the good units from it so both stay consistent:
+# coupling is only defined for good units (NaN elsewhere) and the waveform shape features
+# are remapped to the sparse set (spike_width_secs, predepolarisation_width_secs,
+# spike_amplitude, peak_to_trough_ratio_log; see ibldsp.waveforms.remap_waveform_shape_features)
+good_mask = (df_clusters['bitwise_fail'] == 0).to_numpy()
 if stpc is not None:
-    df_clusters_good = df_clusters_good.assign(**compute_coupling_metrics(stpc))
+    for name, values in compute_coupling_metrics(stpc).items():
+        df_clusters[name] = np.nan
+        df_clusters.loc[good_mask, name] = values
+df_clusters = remap_waveform_shape_features(df_clusters, fs=30_000)
+df_clusters_good = df_clusters.loc[good_mask]
 
 print(f'n_insertions            {len(h5_files)}')
 print(f'waveforms.voltage       {avg_waveforms.shape}')
