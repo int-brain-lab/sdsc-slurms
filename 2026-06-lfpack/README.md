@@ -68,6 +68,10 @@ ceph and reused on reruns) then SVD+WP compression (one pass per `PARAMS` tier,
 `N_OUTER=4` PIDs concurrently × `N_INNER=12` cores = 48. Four in parallel hides ceph I/O
 latency; scaling one PID past ~12–16 workers gives diminishing returns.
 
+**v05 Cadzow is slower**: ~14–18 min per NP1 PID on 12 cores, ~3.4 core-hours/PID in all
+(jobs 2504932, 2504938), i.e. ~12 PIDs/h/node; the 3-node sweep of ~1,100 PIDs takes ~30 h.
+The v04 figures below predate it.
+
 Throughput (measured job 2451554, 6 PIDs, `--overwrite`, with the BLAS thread caps):
 **~2 core-hours/PID** — the parallelism-independent invariant to plan from. At 4×12 with
 full waves (~90% CPU efficiency) that is **~20 PIDs/h/node**; budget ~15/h to absorb
