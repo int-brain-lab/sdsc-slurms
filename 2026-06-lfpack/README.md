@@ -124,7 +124,9 @@ Re-running `reduce.py` rewrites the merged archives without the labels: attach a
 Upload the **labelled** archives straight from ceph with `publish.sbatch` (AWS CLI in
 `~/.local/bin`, `ibl` profile in `~/.aws` on popeye). BWM goes to the public bucket, at the
 root of `ibl-agent-data/` next to the v03 BWM files (not a `bwm/` subfolder); the full
-ephys-atlas cohort goes to the private bucket. Set `VERSION` in the script.
+ephys-atlas cohort goes to the private bucket. Set `VERSION` in the script. Earlier releases
+stay on S3 next to the new one, to reproduce past results (`s3 sync` without `--delete` never
+removes files).
 
 ```bash
 cd ~/Documents/sdsc-slurms/2026-06-lfpack
