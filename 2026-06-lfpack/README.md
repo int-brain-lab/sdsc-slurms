@@ -121,33 +121,19 @@ Re-running `reduce.py` rewrites the merged archives without the labels: attach a
 
 ## Publish on S3
 
-Upload the **labelled** archives. popeye has no AWS credentials, so they still go through the
-laptop for now (~5–9 MB/s, a few hours per release; macOS `openrsync` resumes with `--append`,
-so check the md5 against ceph afterwards):
+Upload the **labelled** archives straight from ceph with `publish.sbatch` (AWS CLI in
+`~/.local/bin`, `ibl` profile in `~/.aws` on popeye). BWM goes to the public bucket, at the
+root of `ibl-agent-data/` next to the v03 BWM files (not a `bwm/` subfolder); the full
+ephys-atlas cohort goes to the private bucket. Set `VERSION` in the script.
 
 ```bash
-OUTPUT_ROOT=ceph/ea/denoised_lfp
-LOCAL=/Users/olivier/Documents/datadisk/lfp-processing/lfpack
-rsync -a --partial --append "popeye:$OUTPUT_ROOT/lf_compressed_v05_*_all.h5"     $LOCAL/v05/
-rsync -a --partial --append "popeye:$OUTPUT_ROOT/lf_compressed_v05_*_all_bwm.h5" $LOCAL/v05_bwm/
-ssh popeye "md5sum $OUTPUT_ROOT/lf_compressed_v05_*.h5"; md5sum $LOCAL/v05*/*.h5
+cd ~/Documents/sdsc-slurms/2026-06-lfpack
+sbatch publish.sbatch --dryrun                                  # list what would be uploaded
+sbatch --dependency=afterok:<attach job> publish.sbatch         # upload once attach is done
 ```
 
-BWM goes to the public bucket, at the root of
-`ibl-agent-data/` next to the v03 BWM files (not a `bwm/` subfolder). The full ephys-atlas
-cohort goes to the private bucket.
-
-```bash
-LOCAL=/Users/olivier/Documents/datadisk/lfp-processing/lfpack
-# BWM (699 PIDs, public): lf_compressed_v05_{a14_small,a07_default,a2p5_fine}_all_bwm.h5
-aws --profile ibl s3 sync $LOCAL/v05_bwm s3://ibl-brain-wide-map-public/resources/ibl-agent-data \
-  --exclude '*' --include 'lf_compressed_v05_*_all_bwm.h5' --dryrun
-# ephys-atlas (1099 PIDs, private): lf_compressed_v05_{a14_small,a07_default,a2p5_fine}_all.h5
-aws --profile ibl s3 sync $LOCAL/v05 s3://ibl-brain-wide-map-private/resources/lfp/ephys-atlas \
-  --exclude '*' --include 'lf_compressed_v05_*_all.h5' --dryrun
-```
-
-Drop `--dryrun` to upload. From the laptop that took ~5.5 h for the 133 GB of v04.
+A local copy is no longer part of the release; to inspect archives on the laptop, rsync them
+from `popeye:ceph/ea/denoised_lfp/` (`--partial --append`, then compare md5 sums).
 
 | release | BWM (public) | ephys-atlas (private) |
 |---|---|---|
