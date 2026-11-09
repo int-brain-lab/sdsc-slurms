@@ -103,7 +103,11 @@ attaches what the compression job doesn't have: per-channel brain locations
 (`ml`/`ap`/`dv`/`atlas_id`/`acronym` on `<pid>/00/meta`, from the ephys-atlas features
 dataframe with a `SpikeSortingLoader` fallback) and the registered sample↔time sync knots on
 every scale. Data access goes through `OneSdsc` (local ceph files); the features table is
-downloaded once to `~/data/ephys-atlas/features`. It labels every `--pattern` archive
+downloaded once to `~/data/ephys-atlas/features`. Lookups are offline: ONE local mode on its
+full cache tables (refreshed at the start of each run, one download) plus `eid`/`pname` from
+the probe-details parquet, ~1.2 s/PID (~20 min for the cohort). Remote ONE costs ~8 Alyx
+requests per PID (~6 s/PID, rate limited); a PID whose offline lookup fails is retried
+through Alyx, and the run reports how many needed it. It labels every `--pattern` archive
 directly under `--root` (default `lf_compressed_v05_*_all*.h5`, both cohorts, all tiers).
 
 Before writing channel annotations it runs a **geometry sanity check**: the source's

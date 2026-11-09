@@ -5,7 +5,17 @@ Runs on popeye (``attach.sbatch``), in place on the merged archives that ``reduc
 the root of ``OUTPUT_ROOT``, so nothing has to be synced to a laptop first.  Data access goes
 through ``OneSdsc`` (local ceph files) when ``deploy.iblsdsc`` is importable, else plain ``ONE``,
 so the script also still runs on a local copy (``--root``).  Re-running ``reduce.py`` rewrites the
-merged archives without these attrs: attach again afterwards.  Consolidates two passes:
+merged archives without these attrs: attach again afterwards.
+
+**Offline lookups.**  ONE in remote mode costs ~8 Alyx requests per PID (insertion → session,
+then dataset listings), which gets rate limited over a whole cohort.  Each PID's
+``SpikeSortingLoader`` is instead built in ONE local mode, from ONE's full cache tables (refresh
+them with ``--refresh-cache``, one download) and the insertion's ``eid`` / ``pname`` from the
+probe-details parquet (``--insertions``).  If anything fails offline (stale tables, PID not in
+the parquet), that PID is retried once through Alyx, which stays the source of truth: a cache
+miss can never clear sync attrs.  The run reports how many PIDs needed Alyx.
+
+Consolidates two passes:
 
 1. **Channels** — brain-location annotations per channel, written to ``<pid>/00/meta``:
    ``ml`` / ``ap`` / ``dv`` (CCF, metres), ``atlas_id`` (int32), ``acronym`` (list[str]).
@@ -42,6 +52,7 @@ import ephysatlas.data
 import h5py
 import lfpack
 import numpy as np
+import pandas as pd
 import tqdm
 from brainbox.io.one import SpikeSortingLoader
 from lfpack import LFPackReader
@@ -57,6 +68,8 @@ ROOT = Path("/mnt/home/owinter/ceph/ea/denoised_lfp")  # reduce.py OUTPUT_ROOT
 PATTERN = "lf_compressed_v05_*_all*.h5"                 # merged archives of the current release
 FEATURES_ROOT = Path.home().joinpath("data", "ephys-atlas", "features")
 PROJECT = "ea_active"
+# pid → eid / pname for offline loaders (same table as compress.py's FILE_INSERTIONS)
+INSERTIONS = Path("/mnt/home/owinter/Documents/cache_tables/df_probe_details_ibl_neuropixel_brainwide_01.pqt")
 # LFP base rate = AP rate / (AP_RESAMPLE × LFP_RESAMPLE); sync pulses are in AP samples.
 LFP_AP_RESAMPLE_FACTOR = 12
 LFP_RESAMPLE_FACTOR = 10
@@ -84,10 +97,11 @@ def load_features_by_pid(one):
     return by_pid
 
 
-def get_channels(pid, features_by_pid, one):
+def get_channels(pid, features_by_pid, loaders):
     """Return per-channel annotation for *pid*, or None if unavailable.
 
-    Prefers the features dataframe; falls back to ``SpikeSortingLoader.load_channels``.
+    Prefers the features dataframe; falls back to ``SpikeSortingLoader.load_channels``
+    (offline first, see `Loaders`).
     Returns a dict with ``ml``/``ap``/``dv`` (m), ``atlas_id``, ``acronym`` and the on-probe
     ``lateral_um``/``axial_um`` (µm, None if the source does not carry them).
     """
@@ -109,7 +123,7 @@ def get_channels(pid, features_by_pid, one):
             acronym=ch["acronym"].tolist(), lateral_um=lateral_um, axial_um=axial_um,
         )
     try:
-        ch = SpikeSortingLoader(one=one, pid=pid).load_channels()
+        ch = loaders.run(pid, lambda ssl: ssl.load_channels())
     except Exception as e:  # noqa: BLE001
         log.warning(f"  {pid}: channels FAIL — {e}")
         return None
@@ -119,6 +133,41 @@ def get_channels(pid, features_by_pid, one):
         acronym=list(ch["acronym"]),
         lateral_um=ch.get("lateral_um"), axial_um=ch.get("axial_um"),
     )
+
+
+class Loaders:
+    """``SpikeSortingLoader`` factory: offline (ONE local mode) first, Alyx as fallback.
+
+    Parameters
+    ----------
+    one : one.api.OneAlyx
+        Remote ONE, used for the fallbacks.
+    one_local : one.api.OneAlyx
+        ONE in local mode on the full cache tables.
+    insertions : pd.DataFrame
+        Indexed by pid, with ``eid`` and ``pname`` columns.
+    """
+
+    def __init__(self, one, one_local, insertions):
+        self.one, self.one_local, self.insertions = one, one_local, insertions
+        self.remote_pids = set()
+
+    def run(self, pid, fcn):
+        """Return ``fcn(ssl)`` on an offline loader; on any failure retry once through Alyx.
+
+        ``SyncInvalid`` is not retried: the knots would be the same from Alyx.
+        """
+        try:
+            if pid not in self.insertions.index:
+                raise KeyError(f"{pid} not in the insertions table")
+            eid, pname = self.insertions.loc[pid, ["eid", "pname"]]
+            return fcn(SpikeSortingLoader(one=self.one_local, eid=eid, pname=pname))
+        except SyncInvalid:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"  {pid}: offline lookup failed ({type(e).__name__}: {e}), asking Alyx")
+            self.remote_pids.add(pid)
+            return fcn(SpikeSortingLoader(one=self.one, pid=pid))
 
 
 def compute_sync(ssl):
@@ -226,10 +275,21 @@ def main():
                         help="Folder holding the merged archives (reduce.py OUTPUT_ROOT).")
     parser.add_argument("--pattern", default=PATTERN,
                         help="Glob of the archives to label, directly under --root.")
+    parser.add_argument("--insertions", type=Path, default=INSERTIONS,
+                        help="Parquet with pid / eid / pname columns, for offline loaders.")
+    parser.add_argument("--refresh-cache", action="store_true",
+                        help="Download the latest ONE cache tables first (do it once per release).")
     parser.add_argument("--dry-run", action="store_true", help="Report only; do not write attrs.")
     args = parser.parse_args()
 
     one = ONE()
+    if args.refresh_cache:
+        log.info(f"ONE cache tables refreshed: {one.load_cache(clobber=True)}")
+    one_local = ONE(mode="local")
+    log.info(f"ONE cache tables created {one_local._cache['_meta'].get('created_time')}")
+    insertions = (pd.read_parquet(args.insertions).drop_duplicates("pid").set_index("pid")
+                  if args.insertions.exists() else pd.DataFrame(columns=["eid", "pname"]))
+    loaders = Loaders(one, one_local, insertions)
     features_by_pid = load_features_by_pid(one)
 
     h5files = sorted(args.root.glob(args.pattern))
@@ -244,20 +304,20 @@ def main():
     fail_sync_missing, fail_sync_invalid, fail_sync_unexpected = [], [], []
 
     for pid in tqdm.tqdm(pids):
-        channels = get_channels(pid, features_by_pid, one)
+        channels = get_channels(pid, features_by_pid, loaders)
         if channels is None:
             fail_channels.append(pid)
 
         # Sync: bucket the outcome into exactly one of three categories. The
         # ALFObjectNotFound/SyncInvalid catches wrap *only* compute_sync (inner try) — the
-        # SpikeSortingLoader construction stays under the outer bare-Exception catch alone,
-        # so an unrelated loader bug can never be miscategorized as "no sync data".
+        # loader's own failures stay under the outer bare-Exception catch alone, so an
+        # unrelated loader bug can never be miscategorized as "no sync data".  Offline
+        # failures were already retried through Alyx by `Loaders.run`.
         samples = times = None
         sync_fail = None
         try:
-            ssl = SpikeSortingLoader(one=one, pid=pid)
             try:
-                samples, times = compute_sync(ssl)
+                samples, times = loaders.run(pid, compute_sync)
             except ALFObjectNotFound:
                 sync_fail = "missing"
                 fail_sync_missing.append(pid)
@@ -319,6 +379,7 @@ def main():
                             lfpack.clear_sync_attrs(meta)
 
     log.info("Done.")
+    log.info(f"PIDs that needed Alyx       : {len(loaders.remote_pids)}  {sorted(loaders.remote_pids) or ''}")
     log.info(f"channels source failures : {len(fail_channels)}  {fail_channels or ''}")
     log.info(f"sync missing (no dataset): {len(fail_sync_missing)}  {fail_sync_missing or ''}")
     log.info(f"sync invalid (bad knots) : {len(fail_sync_invalid)}  {fail_sync_invalid or ''}")

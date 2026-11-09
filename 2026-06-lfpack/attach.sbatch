@@ -17,4 +17,5 @@ PYTHON_SCRIPT=~/Documents/sdsc-slurms/2026-06-lfpack/attach_ibl_metadata.py
 
 module load python/3.11
 
-$PYTHON_EXEC -u $PYTHON_SCRIPT "$@"
+# --refresh-cache: latest ONE cache tables (one download) for the offline lookups
+$PYTHON_EXEC -u $PYTHON_SCRIPT --refresh-cache "$@"
