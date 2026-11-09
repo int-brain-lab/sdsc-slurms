@@ -1,8 +1,11 @@
 """
-Attach IBL metadata to lfpack HDF5 archives — single local post-processing step.
+Attach IBL metadata to lfpack HDF5 archives — post-processing step after ``reduce.py``.
 
-Runs on a local machine (not the cluster) against the aggregated archives synced from
-ceph.  Consolidates two previously separate passes:
+Runs on popeye (``attach.sbatch``), in place on the merged archives that ``reduce.py`` writes at
+the root of ``OUTPUT_ROOT``, so nothing has to be synced to a laptop first.  Data access goes
+through ``OneSdsc`` (local ceph files) when ``deploy.iblsdsc`` is importable, else plain ``ONE``,
+so the script also still runs on a local copy (``--root``).  Re-running ``reduce.py`` rewrites the
+merged archives without these attrs: attach again afterwards.  Consolidates two passes:
 
 1. **Channels** — brain-location annotations per channel, written to ``<pid>/00/meta``:
    ``ml`` / ``ap`` / ``dv`` (CCF, metres), ``atlas_id`` (int32), ``acronym`` (list[str]).
@@ -25,8 +28,9 @@ source electrode exactly; source-dropped channels are filled with void.  If almo
 matches the source is the wrong probe — that PID is reported and channels are skipped (sync is
 still attached, as it does not depend on channel order).
 
-Metadata is written into every ``*compressed*.h5`` found under ``--local-root`` (default and
-aggressive, BWM and full-atlas), for whichever recordings each archive contains.
+Metadata is written into every archive matching ``--pattern`` directly under ``--root`` (all
+tiers, BWM and full-atlas; not recursive, so the per-PID files in the sub-folders are left
+alone), for whichever recordings each archive contains.
 """
 
 import argparse
@@ -42,10 +46,15 @@ import tqdm
 from brainbox.io.one import SpikeSortingLoader
 from lfpack import LFPackReader
 from one.alf.exceptions import ALFObjectNotFound
-from one.api import ONE
+
+try:  # popeye: local ceph data access, no downloads
+    from deploy.iblsdsc import OneSdsc as ONE
+except ImportError:
+    from one.api import ONE
 
 # ── config ───────────────────────────────────────────────────────────────────
-LOCAL_ROOT = Path("/Users/olivier/Documents/datadisk/lfp-processing/lfpack")
+ROOT = Path("/mnt/home/owinter/ceph/ea/denoised_lfp")  # reduce.py OUTPUT_ROOT
+PATTERN = "lf_compressed_v05_*_all*.h5"                 # merged archives of the current release
 FEATURES_ROOT = Path.home().joinpath("data", "ephys-atlas", "features")
 PROJECT = "ea_active"
 # LFP base rate = AP rate / (AP_RESAMPLE × LFP_RESAMPLE); sync pulses are in AP samples.
@@ -213,17 +222,20 @@ def join_channels_to_archive(meta, channels):
 
 def main():
     parser = argparse.ArgumentParser(description="Attach IBL channels + sync metadata to lfpack archives.")
-    parser.add_argument("--local-root", type=Path, default=LOCAL_ROOT,
-                        help="Root holding the synced *compressed*.h5 archives.")
+    parser.add_argument("--root", "--local-root", type=Path, default=ROOT,
+                        help="Folder holding the merged archives (reduce.py OUTPUT_ROOT).")
+    parser.add_argument("--pattern", default=PATTERN,
+                        help="Glob of the archives to label, directly under --root.")
     parser.add_argument("--dry-run", action="store_true", help="Report only; do not write attrs.")
     args = parser.parse_args()
 
     one = ONE()
     features_by_pid = load_features_by_pid(one)
 
-    h5files = sorted(args.local_root.rglob("*compressed*.h5"))
+    h5files = sorted(args.root.glob(args.pattern))
     if not h5files:
-        raise SystemExit(f"No *compressed*.h5 under {args.local_root}")
+        raise SystemExit(f"No {args.pattern} under {args.root}")
+    log.info(f"Archives: {[f.name for f in h5files]}")
     # union of recordings across all archives → every recording gets annotated
     pids = sorted({pid for f in h5files for pid in LFPackReader.recordings(f)})
     log.info(f"{len(h5files)} archive(s), {len(pids)} unique recording(s)")

@@ -94,12 +94,36 @@ under that:
 Get the total PID count from the first line each task logs — `Task 0/N: queuing M PIDs`
 (multiply M by the array size) — then divide by ~15–20/h/node.
 
-## Sync results to local
+## Attach IBL metadata (on popeye)
 
-`reduce.py` and `reduce.py --bwm` write the merged archives at the root of `OUTPUT_ROOT`. Copy
-them into one local folder per cohort. Expect ~5–9 MB/s, i.e. a few hours per release. `--partial`
-keeps a dropped transfer and macOS `openrsync` resumes it with `--append` (it has no
-`--append-verify`), so check the md5 against ceph afterwards.
+`reduce.py` and `reduce.py --bwm` write the merged archives at the root of `OUTPUT_ROOT`.
+`attach_ibl_metadata.py` then labels them **in place on ceph** (`attach.sbatch`), so the
+labelled ceph archives are the release and nothing is synced to a laptop for this step. It
+attaches what the compression job doesn't have: per-channel brain locations
+(`ml`/`ap`/`dv`/`atlas_id`/`acronym` on `<pid>/00/meta`, from the ephys-atlas features
+dataframe with a `SpikeSortingLoader` fallback) and the registered sample↔time sync knots on
+every scale. Data access goes through `OneSdsc` (local ceph files); the features table is
+downloaded once to `~/data/ephys-atlas/features`. It labels every `--pattern` archive
+directly under `--root` (default `lf_compressed_v05_*_all*.h5`, both cohorts, all tiers).
+
+Before writing channel annotations it runs a **geometry sanity check**: the source's
+on-probe `lateral_um`/`axial_um` are matched by exact position against the archive's
+`geometry_x`/`geometry_y` (both µm). If too few channels match, the source is the wrong
+probe — those PIDs are reported and their channels skipped (sync still attaches).
+
+```bash
+cd ~/Documents/sdsc-slurms/2026-06-lfpack
+sbatch --dependency=afterok:<reduce job> attach.sbatch            # write attrs in place
+sbatch attach.sbatch --dry-run                                    # report only
+```
+
+Re-running `reduce.py` rewrites the merged archives without the labels: attach again after it.
+
+## Publish on S3
+
+Upload the **labelled** archives. popeye has no AWS credentials, so they still go through the
+laptop for now (~5–9 MB/s, a few hours per release; macOS `openrsync` resumes with `--append`,
+so check the md5 against ceph afterwards):
 
 ```bash
 OUTPUT_ROOT=ceph/ea/denoised_lfp
@@ -109,34 +133,7 @@ rsync -a --partial --append "popeye:$OUTPUT_ROOT/lf_compressed_v05_*_all_bwm.h5"
 ssh popeye "md5sum $OUTPUT_ROOT/lf_compressed_v05_*.h5"; md5sum $LOCAL/v05*/*.h5
 ```
 
-Label each folder separately (`--local-root $LOCAL/v05`, then `$LOCAL/v05_bwm`, see below):
-`attach_ibl_metadata.py` writes into every `*compressed*.h5` under the root, so keep other
-versions out of it. Once labelled, the local archives are the release; the ceph copies stay
-unlabelled.
-
-## Local post-processing: attach IBL metadata
-
-`attach_ibl_metadata.py` runs **locally** (not on the cluster) against the synced archives
-and attaches IBL information the cluster job doesn't have: per-channel brain locations
-(`ml`/`ap`/`dv`/`atlas_id`/`acronym` on `<pid>/00/meta`, from the ephys-atlas features
-dataframe with a `SpikeSortingLoader` fallback) and the sample→time sync affine
-(`fs_sync`/`t0_sync` on every scale, fitted from probe sync pulses, QC < 1 ms). It writes
-into every `*compressed*.h5` under `--local-root`, for whichever recordings each holds.
-
-Before writing channel annotations it runs a **geometry sanity check**: the source's
-on-probe `lateral_um`/`axial_um` are compared channel-by-channel against the archive's
-stored `geometry_x`/`geometry_y` (both µm). A mismatch means the source channel order
-doesn't line up with the archive, so brain locations would be misassigned — those PIDs are
-reported and their channels skipped (sync still attaches).
-
-```bash
-python attach_ibl_metadata.py --dry-run   # report only: geometry check + failure summary
-python attach_ibl_metadata.py             # write attrs into the local archives
-```
-
-## Publish on S3
-
-Upload the **labelled** local archives. BWM goes to the public bucket, at the root of
+BWM goes to the public bucket, at the root of
 `ibl-agent-data/` next to the v03 BWM files (not a `bwm/` subfolder). The full ephys-atlas
 cohort goes to the private bucket.
 
