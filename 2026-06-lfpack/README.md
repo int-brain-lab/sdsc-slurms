@@ -154,7 +154,10 @@ Release notes, one line per change of the data (rationale and benchmarks in olic
   (`analyses/2026-10-lfpack-v05`). Archives record their provenance (`LFPackReader.provenance`).
   1,097 of 1,099 PIDs: 4037a618-e6ba-4142-a6d2-3e32ef25fd1b and 46630957-63fd-4d0d-a2ba-8766f0796db8 have
   all 384 channels labelled bad, which hangs ibl-neuropixel 1.14 `_fill_grid`; their v04 archives
-  were empty (~110 kB, CR > 10,000).
+  were empty (~110 kB, CR > 10,000). No sync knots for 1e176f17, 4b93a168, 701026df, eedba3b6
+  (no sync dataset on Alyx). bf96f6d6 had no `channel_labels.npy` (detection crashed): its
+  `labels` attr was copied from the small tier into default/fine. Uploaded 2026-11-09 from the
+  popeye login node (`bash publish.sbatch` in tmux, ~1.5 h, sizes checked against ceph).
 - **v04** — codec: lfpack 1.0 format 2, shared spatial basis m = 32, ε = 100, tiers set by α
   (`analyses/2026-06-lfp-compression-svd`).
 - **v03** — default / aggressive tiers (ε = 150, α = 28 / ε = 450, α = 96),
